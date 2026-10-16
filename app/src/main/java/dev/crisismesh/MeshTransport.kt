@@ -13,7 +13,7 @@ interface MeshTransport {
      */
     fun listen(port: Int, onPacket: (ByteArray) -> Unit, onStatus: (String) -> Unit)
 
-    /** Fire-and-forget send of [payload] to "host:port", from a worker thread. */
+    /** Worker-thread send; waits for frame receipt, not durable storage or end-to-end delivery. */
     fun send(address: String, payload: ByteArray, onStatus: (String) -> Unit)
 
     /** Stop listening; in-flight sends finish on their own. */
@@ -23,49 +23,61 @@ interface MeshTransport {
 /**
  * One TCP connection per packet, 4-byte big-endian length frame. Simple enough
  * to audit: no discovery, no persistence, no reconnect state to go stale.
- * Emulators reach each other through adb reverse mappings on loopback.
+ * Emulators reach each other through adb forward mappings on loopback.
  */
 class TcpMeshTransport : MeshTransport {
     private object Frame {
         const val MAX = 1024
+        const val RECEIVED = 6
     }
 
     @Volatile private var server: java.net.ServerSocket? = null
-    @Volatile private var closed = false
+    private var client: java.net.Socket? = null
 
+    @Synchronized
     override fun listen(port: Int, onPacket: (ByteArray) -> Unit, onStatus: (String) -> Unit) {
         close()
-        closed = false
+        val srv = java.net.ServerSocket()
+        try {
+            srv.reuseAddress = true
+            srv.bind(java.net.InetSocketAddress(port))
+        } catch (e: Exception) {
+            srv.close()
+            onStatus("Nie mogę nasłuchiwać na porcie $port: ${e.message}")
+            return
+        }
+        server = srv
         Thread({
-            try {
-                val srv = java.net.ServerSocket().apply {
-                    reuseAddress = true
-                    bind(java.net.InetSocketAddress(port))
-                }
-                server = srv
-                onStatus("Nasłuch na porcie $port")
-                while (!closed) {
-                    try {
-                        srv.accept().use { sock ->
+            onStatus("Nasłuch na porcie ${srv.localPort}")
+            while (!srv.isClosed) {
+                try {
+                    srv.accept().use { sock ->
+                        synchronized(this) {
+                            if (server !== srv) return@use
+                            client = sock
+                        }
+                        try {
                             sock.soTimeout = 10_000
                             val input = java.io.DataInputStream(sock.getInputStream())
                             val length = input.readInt()
-                            if (length <= 0 || length > Frame.MAX) {
-                                onStatus("Odrzucono ramkę o długości $length")
-                                return@use
-                            }
+                            require(length in 1..Frame.MAX) { "Niepoprawna długość ramki: $length" }
                             val payload = ByteArray(length)
                             input.readFully(payload)
-                            onPacket(payload)
+                            synchronized(this) {
+                                if (server !== srv) return@use
+                                onPacket(payload)
+                                sock.getOutputStream().apply { write(Frame.RECEIVED); flush() }
+                            }
+                            // Keep the receipt readable until the sender closes. ADB tunnels
+                            // can discard buffered output when either endpoint closes early.
+                            check(input.read() == -1) { "Dane po zakończeniu ramki" }
+                        } finally {
+                            synchronized(this) { if (client === sock) client = null }
                         }
-                    } catch (e: java.net.SocketException) {
-                        if (closed) break else onStatus("Błąd gniazda: ${e.message}")
-                    } catch (e: Exception) {
-                        onStatus("Błąd odbioru: ${e.message}")
                     }
+                } catch (e: Exception) {
+                    if (!srv.isClosed) onStatus("Błąd odbioru: ${e.message ?: e.javaClass.simpleName}")
                 }
-            } catch (e: Exception) {
-                if (!closed) onStatus("Nie mogę nasłuchiwać na porcie $port: ${e.message}")
             }
         }, "mesh-listen").apply { isDaemon = true; start() }
     }
@@ -86,21 +98,21 @@ class TcpMeshTransport : MeshTransport {
                     out.writeInt(payload.size)
                     out.write(payload)
                     out.flush()
+                    check(sock.getInputStream().read() == Frame.RECEIVED) { "Brak potwierdzenia ramki" }
                 }
-                onStatus("Wysłano ${payload.size} B → $host:$port")
+                onStatus("Ramka odebrana przez $host:$port · ${payload.size} B (nie potwierdza zapisu)")
             } catch (e: Exception) {
                 onStatus("Błąd wysyłki do $host:$port: ${e.message}")
             }
         }, "mesh-send").apply { isDaemon = true; start() }
     }
 
+    @Synchronized
     override fun close() {
-        closed = true
-        try {
-            server?.close()
-        } catch (_: Exception) {
-        }
+        server?.close()
         server = null
+        client?.close()
+        client = null
     }
 
     private fun parse(address: String): Pair<String, Int>? {

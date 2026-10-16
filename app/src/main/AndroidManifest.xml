@@ -1,9 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- INTERNET exists ONLY for local socket transport (MeshTransport over
-         LAN/emulator loopback). No remote endpoint, analytics or cloud is
-         ever contacted; received bytes stay on-device. -->
+    <!-- TCP connects only to user-configured peers. INTERNET is not restricted
+         to LAN addresses; use a trusted test network. No built-in cloud endpoint. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application

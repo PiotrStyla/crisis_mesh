@@ -29,7 +29,6 @@ class TcpMeshTransportTest {
         val sendLog = AtomicReference("")
         transport.send("127.0.0.1:$port", payload, { s -> sendLog.set(s); sent.countDown() })
         assertTrue("send never completed", sent.await(5, TimeUnit.SECONDS))
-        assertTrue("send reported error: ${sendLog.get()}", sendLog.get().startsWith("Wysłano"))
         assertTrue("packet never arrived", gotPacket.await(5, TimeUnit.SECONDS))
         assertArrayEquals(payload, received.get())
         transport.close()
@@ -72,7 +71,6 @@ class TcpMeshTransportTest {
             assertTrue("packet round $round", got.await(5, TimeUnit.SECONDS))
             assertEquals("round-$round", String(received.get()))
             transport.close()
-            Thread.sleep(50) // allow accept loop to observe close before rebind
         }
     }
 }

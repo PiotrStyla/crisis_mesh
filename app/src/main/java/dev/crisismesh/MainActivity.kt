@@ -1,6 +1,4 @@
-// MainActivity.kt - offline CM1 report form for phone and Wear OS.
-// No permissions, no network: creating, importing and sharing reports are
-// local operations; sharing only opens the system share sheet with packet text.
+// Local report form with explicitly configured TCP forwarding peers.
 
 package dev.crisismesh
 
@@ -70,7 +68,7 @@ private fun App() {
     var confirmDelete by remember { mutableStateOf<StoredReport?>(null) }
     var meshPeer by remember { mutableStateOf("") }
     var meshStatus by remember { mutableStateOf("Nasłuch: wyłączony") }
-    val mesh = remember { TcpMeshTransport() }
+    val mesh = remember { MeshNode() }
     val refresh = { reports.clear(); reports.addAll(store.load()) }
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
     // Worker-thread callbacks marshalled to the UI thread for every status.
@@ -167,6 +165,11 @@ private fun App() {
                 MeshCard(
                     peer = meshPeer, onPeer = { meshPeer = it },
                     status = meshStatus,
+                    onApply = {
+                        runCatching { mesh.configurePeers(meshPeer) }
+                            .onSuccess { meshStatus = "Zastosowano sąsiadów" }
+                            .onFailure { meshStatus = it.message ?: "Niepoprawne adresy" }
+                    },
                     onListen = { mesh.listen(8765, onPacket, onStatus) },
                 )
 
@@ -183,11 +186,8 @@ private fun App() {
                     HistoryRow(
                         item,
                         onSend = {
-                            if (meshPeer.isBlank()) {
-                                meshStatus = "Podaj adres rozmówcy jako host:port"
-                            } else {
-                                mesh.send(meshPeer, Codec.pack(item.report), onStatus)
-                            }
+                            runCatching { mesh.publish(Codec.pack(item.report), onStatus) }
+                                .onFailure { meshStatus = it.message ?: "Błąd wysyłki" }
                         },
                         onShare = {
                             val packet = String(Codec.pack(item.report), Charsets.US_ASCII)
@@ -231,7 +231,7 @@ private fun Header() = Column(
 ) {
     Text("Crisis Mesh", fontSize = 22.sp, letterSpacing = 1.sp, textAlign = TextAlign.Center)
     Text(
-        "Bez chmury · tylko sieć lokalna",
+        "Bez serwera centralnego · TCP",
         fontSize = 12.sp, color = Dim, textAlign = TextAlign.Center,
         modifier = Modifier.cd("status"),
     )
@@ -305,21 +305,26 @@ private fun ChoiceRow(label: String, options: Map<String, String>, selected: Str
 
 @Composable
 private fun MeshCard(
-    peer: String, onPeer: (String) -> Unit, status: String, onListen: () -> Unit,
+    peer: String, onPeer: (String) -> Unit, status: String,
+    onApply: () -> Unit, onListen: () -> Unit,
 ) {
     Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Sieć lokalna (TCP)", fontSize = 14.sp, color = Dim)
+            Text("Mesh TCP · do 4 przeskoków", fontSize = 14.sp, color = Dim)
+            Text("Tylko zaufana sieć testowa. Bez szyfrowania i gwarancji dostarczenia.", fontSize = 12.sp, color = Dim)
             OutlinedTextField(
-                peer, onPeer, singleLine = true,
-                label = { Text("host:port rozmówcy, np. 10.0.2.2:9001") },
+                peer, onPeer, maxLines = 4,
+                label = { Text("Sąsiedzi host:port, po przecinku") },
                 modifier = Modifier.fillMaxWidth().cd("mesh-peer"),
                 textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 13.sp),
             )
+            Button(onClick = onApply, modifier = Modifier.fillMaxWidth().cd("mesh-apply")) {
+                Text("Zastosuj sąsiadów")
+            }
             Button(
                 onClick = onListen,
                 modifier = Modifier.fillMaxWidth().cd("mesh-listen"),
-            ) { Text("Nasłuchuj (port 8765)") }
+            ) { Text("Nasłuchuj :8765") }
             Text(status, fontSize = 12.sp, color = Amber, modifier = Modifier.cd("mesh-status"))
         }
     }
@@ -356,6 +361,7 @@ private fun ImportCard(
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun HistoryRow(item: StoredReport, onSend: () -> Unit, onShare: () -> Unit, onDelete: () -> Unit) {
     val packet = remember(item) { String(Codec.pack(item.report), Charsets.US_ASCII) }
@@ -368,7 +374,7 @@ private fun HistoryRow(item: StoredReport, onSend: () -> Unit, onShare: () -> Un
             Text(Codec.render(item.report), fontSize = 14.sp)
             Text(packet, fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = Amber)
             if (item.note.isNotBlank()) Text(item.note, fontSize = 13.sp, color = Dim)
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 TextButton(onClick = onSend, modifier = Modifier.cd("send")) {
                     Text("Wyślij", fontSize = 13.sp)
                 }

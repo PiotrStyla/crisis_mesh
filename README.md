@@ -1,6 +1,6 @@
 # Crisis Mesh / Radio Officer
 
-Eksperyment **codec-first** dla kryzysowej komunikacji offline: polskie zgłoszenie → propozycja pól lokalnego GoLLeM → przegląd przez człowieka → mały pakiet → deterministyczny opis. Repo zawiera działający kodek, adapter lokalnej inferencji i benchmark. **Nie jest to jeszcze aplikacja Android/Wear OS ani sieć mesh.** Nie wysyła SOS ani nie kontaktuje się ze służbami.
+Eksperymentalna aplikacja Android/Wear OS do krótkich raportów kryzysowych: formularz → pakiet CM1 → przekazywanie między ręcznie skonfigurowanymi sąsiadami TCP → deterministyczny opis. Repo zawiera też adapter lokalnego GoLLeM i benchmark ekstrakcji. **Multi-hop działa na TCP; BLE, odkrywanie urządzeń i radio mesh nie są zaimplementowane.** To nie jest niezawodny system ratunkowy. Nie wysyła SOS do służb.
 
 ## Wynik eksperymentu
 
@@ -61,19 +61,18 @@ Build nie usuwa katalogów; można wskazać istniejący build. Podczas weryfikac
 
 ## Aplikacja Android / Wear OS (`app/`)
 
-Moduł Kotlin + Compose, uprawnienie **wyłącznie `INTERNET`** (gniazda do
-lokalnego transportu `MeshTransport`; żaden serwer zewnętrzny nie jest
-wołany — brak lokalizacji, Bluetooth, reklam i chmury): ekran formularza,
-lokalna historia, import/eksport pakietów CM1 oraz karta sieci lokalnej.
-Działa na
-telefonie i zegarku (minSdk 26, target 35). Dane trafiają wyłącznie do
-prywatnego pliku aplikacji (`filesDir/reports.json`). Notatka z formularza jest
-lokalna i **nie wchodzi w pakiet CM1**.
+Moduł Kotlin + Compose, minSdk 26, target 35. Formularz, lokalna historia,
+import/eksport CM1 i przekazywanie przez TCP. Jedynym uprawnieniem jest
+`INTERNET`: **nie ogranicza ono połączeń do LAN**. Adresy sąsiadów wpisuje
+użytkownik; mogą wskazywać także publiczny host. Brak wbudowanego endpointu
+chmurowego, lokalizacji i obsługi Bluetooth.
 
-Udostępnianie otwiera wyłącznie systemowy wybór aplikacji (share sheet) z
-tekstem pakietu. Jedyny aktywny kanał sieciowy to transport `MeshTransport`
-(gniazda TCP w sieci lokalnej) opisany niżej — żaden adres zewnętrzny nie jest
-wołany. Własnej warstwy mesh (multi-hop, odkrywanie węzłów) jeszcze nie ma.
+Historia jest zapisywana w prywatnym `filesDir/reports.json`; przychodzące
+poprawne raporty zapisują się automatycznie ze źródłem `mesh`. Ta etykieta
+nie uwierzytelnia nadawcy. Notatka z formularza pozostaje lokalna.
+Udostępnianie otwiera systemowy share sheet z samym tekstem CM1.
+Zapis historii nie jest transakcyjny; sprawdzono przetrwanie zamknięcia
+aplikacji po zapisie, nie awarii podczas zapisu.
 
 ### Co zweryfikowano (emulator `Wear5_LargeRound`, API 34, 2026-10-16)
 
@@ -91,50 +90,88 @@ Zawartość udostępnianego `EXTRA_TEXT` jest odczytana z kodu, nie zaobserwowan
 w drugiej aplikacji. Automatyzacja UI używa `contentDescription` (`save`,
 `people-plus`, `choice-water`, `import-commit`, `delete`…).
 
-### Transport: `MeshTransport` (TCP, sieć lokalna)
+### Multi-hop: `MeshNode` + `TcpMeshTransport`
 
-Szczelina (seam) między pakietami CM1 a warstwą bitową: interfejs
-`listen/send/close`, adapter `TcpMeshTransport` — jedno połączenie TCP na
-pakiet, ramka `4 B` długość (big-endian) + payload (limit 1024 B), timeouty
-3 s (łączenie) / 10 s (odbiór), bez odkrywania węzłów i bez stanu między
-pakietami. Odbiorca waliduje bajty przez ten sam `Codec.unpack` co import:
-pakiet niekanoniczny nie trafia do historii.
+W karcie mesh wpisz do 8 adresów `host:port`, oddzielonych przecinkiem,
+i naciśnij **Zastosuj sąsiadów**. Pusta lista oznacza węzeł odbierający bez
+przekazywania. Uruchom **Nasłuchuj :8765** na każdym odbiorcy/przekaźniku.
+Przycisk **Wyślij** przy raporcie publikuje go do zastosowanej listy.
+Edycja pola bez „Zastosuj” nie zmienia aktywnej konfiguracji.
 
-Testy JVM (`TcpMeshTransportTest` + `test_codec`, razem 11 testów w
-`./gradlew testDebugUnitTest`): dokładny roundtrip bajtów po pętli, błędny
-adres, nieosiągalny rówieśnik, restart nasłuchu po `close()`.
+Każda świadoma wysyłka tworzy nowy UUID. Odbiorca najpierw sprawdza kopertę
+i kanoniczny CM1, potem blokuje powtórzone UUID, zapisuje raport i przekazuje
+go wszystkim swoim sąsiadom, jeśli pozwala budżet przeskoków. Domyślny limit
+to 4 połączenia od źródła; API dopuszcza 1–8. Odbiorca z budżetem 0 nadal
+otrzymuje raport, ale już go nie przekazuje. Źródło pamięta UUID przed wysłaniem,
+więc powrót przez cykl nie dopisuje mu własnego raportu.
 
-Test dwu-urządzeniowy (emulatory, ten sam APK na obu):
+**Protokół sieciowy — czyste przejście, bez zgodności ze starymi ramkami:**
+
+| Element | Kodowanie |
+|---|---|
+| Długość ramki | 4 B, big-endian, limit transportu 1024 B |
+| Wersja koperty | 4 B ASCII `CMF1` |
+| Identyfikator wiadomości | 16 B UUID, most/least significant bits big-endian |
+| Pozostałe przekazania | 1 B, 0–7; nadawca początkowy wpisuje `maxHops - 1` |
+| Treść | kanoniczny CM1, bez zmian w kodeku |
+| Odpowiedź na pełną ramkę | 1 B `0x06`, następnie nadawca zamyka połączenie |
+
+Koperta dodaje 21 B do CM1. Przykład `CM1|12|2|flood|water`: 20 B treści,
+41 B koperty, 45 B żądania z długością oraz 1 B odpowiedzi — bez narzutu TCP/IP.
+Jedno połączenie przenosi jedną ramkę. Timeouty: 3 s łączenie, 10 s odczyt.
+Odbiorca czeka na zamknięcie przez nadawcę po odpowiedzi. Natychmiastowe
+zamykanie po wysłaniu dawało w tunelu ADB EOF i brak raportu albo brak
+potwierdzenia; po zmianie kolejności zamykania opisany niżej scenariusz przeszedł.
+Nie ustalono wewnętrznej przyczyny zachowania ADB.
+
+`0x06` potwierdza **odbiór pełnej ramki**, również duplikatu lub koperty
+odrzuconej przez wyższą warstwę. Nie potwierdza poprawności raportu, zapisu
+na dysku ani dostarczenia przez kolejne węzły. UI mówi to wprost.
+
+**Granice prototypu:**
+- Deduplikacja obejmuje ostatnie 4096 UUID w pamięci procesu, nie trwałą
+  historię. Restart/odtworzenie ekranu lub wyparcie UUID pozwala na ponowny odbiór.
+- Ponowne naciśnięcie „Wyślij” tworzy nową wiadomość, nawet dla identycznej treści.
+- Lista sąsiadów i nasłuch wymagają ponownego ustawienia po odtworzeniu aplikacji.
+- Brak discovery, kolejki offline, automatycznego ponawiania, gwarancji dostarczenia,
+  szyfrowania, uwierzytelniania i usługi działającej niezawodnie w tle.
+- Nasłuch jest na wszystkich interfejsach. Kto ma dostęp do portu, może podawać
+  fałszywe raporty, zapełniać historię albo blokować odbiór. Tylko zaufana sieć testowa.
+- Nie wykonano testów fizycznego radia, zasięgu, baterii ani działania bez infrastruktury.
+
+### Dowody multi-hop
+
+`testDebugUnitTest`: 17 testów bez błędów (7 `AppCodecTest`, 4
+`TcpMeshTransportTest`, 6 `MeshNodeTest`). Testy routingu używają rzeczywistych
+gniazd loopback: łańcuch bez bezpośredniego A–C, cykl, limit jednego przeskoku,
+tożsamość UUID niezależna od treści, błędny payload bez zatrucia UUID,
+nieznana wersja i niepoprawny budżet.
+
+Smoke na APK: host A → emulator Wear B → emulator telefonu C, przez `adb forward`.
+Host wysyła wyłącznie na port B; B ma sąsiada C. Nie jest to test radia.
+
+| Scenariusz | Zaobserwowany wynik |
+|---|---|
+| `CM1\|12\|2\|flood\|water` przez A → B → C | historia zegarka 6→7, telefonu 5→6; zgodne cztery pola w obu prywatnych plikach |
+| Ponowne przesłanie tego samego UUID | oba liczniki bez zmiany |
+| Nowy UUID z budżetem 0 | zegarek 7→8, telefon pozostaje 6 |
+| Niekanoniczny `CM1\|01\|0\|fire\|rescue` | odrzucony, bez zapisu i przekazania |
+| Wysyłka przyciskiem na telefonie, ze zwrotnym połączeniem zegarek → telefon | zegarek 8→9, telefon pozostaje 6; oba pokazują potwierdzenie ramki |
+
+Konfiguracja użyta w próbie (obydwa urządzenia z nowym APK):
 
 ```powershell
-adb -s <wear> forward tcp:9001 tcp:8765    # host:9001 -> zegarek:8765
-# zegarek: przycisk "Nasłuchuj (port 8765)"
-# telefon: pole rozmówcy 10.0.2.2:9001, przy raporcie "Wyślij"
+adb -s emulator-5554 forward tcp:9001 tcp:8765 # host -> zegarek
+adb -s emulator-5556 forward tcp:9002 tcp:8765 # host -> telefon
+# Zegarek: sąsiad 10.0.2.2:9002, Zastosuj, Nasłuchuj.
+# Telefon: początkowo brak sąsiadów, Nasłuchuj.
+# Próba cyklu: telefon dostaje sąsiada 10.0.2.2:9001, Zastosuj, Wyślij.
 ```
 
-Ograniczenia, wprost: TCP to pierwszy adapter, **nie mesh** — brak multi-hop,
-redundancji i odkrywania; `10.0.2.2` to pętla emulatora, nie adres w terenie.
-Dla kryzysu docelowym łączem są BLE / WiFi Aware pod ten sam interfejs
-(wymagają sprzętu — emulatory nie mają radiowy hardware). Prawdziwy mesh
-multi-hop to osobny, przyszły etap.
+`10.0.2.2` jest aliasem hosta w emulatorze, nie adresem do użycia w terenie.
+Wspólna sieć fizyczna wymaga osiągalnych adresów urządzeń i dostępnego portu.
 
-Wyniki testu dwu-urządzeniowego (wear `Wear5_LargeRound` ↔ telefon `LLM_API`,
-oba emulatory, 2026-10-17):
-
-| Kierunek | Dowód |
-|---|---|
-| telefon → zegarek | telefon: `Wysłano 23 B → 10.0.2.2:9001`; zegarek: `Odebrano CM1\|9\|4\|collapse\|rescue`, `Historia (1)` → `(2)`, wpis źródła `mesh` |
-| zegarek → telefon | zegarek: `Wysłano 23 B → 10.0.2.2:9002`; telefon: `Odebrano CM1\|9\|4\|collapse\|rescue`, `Historia (3)` → `(4)` |
-| przechwycenie bajtów zegarka (host:9701) | dokładnie 27 B: `00000017` + `434d317c…726573637565` = `CM1\|9\|4\|collapse\|rescue` |
-| ramka niepoprawna | walidacja po stronie odbiorcy przez `Codec.unpack` (bez appendu do historii) |
-
-Obserwacja nie w pełni wyjaśniona: przy **pierwszym** połączeniu przez świeżo
-utworzony `adb forward` odbiorca raz zanotował `Błąd odbioru: null` (EOF przed
-danymi); kolejne wysyłki przez ten sam tunel i każde połączenie z hosta
-docierały poprawnie — traktujemy to jak artefakt zestawiania tunelu emulatora,
-nie jako błąd protokołu aplikacji `[INFERENCE]`. Brak deduplikacji: powtórzony
-pakiet dopisuje kolejny wpis (zaobserwowane przy `(3)` → `(4)`).
-
+### Budowa
 
 Wymagania: JDK 17, Android SDK (platforma 35, build-tools), Gradle 8.10.2
 (wrapper w repo; jeśli `gradlew` zgłosi brak `gradle-wrapper.jar`, uruchom
@@ -142,10 +179,13 @@ Wymagania: JDK 17, Android SDK (platforma 35, build-tools), Gradle 8.10.2
 
 ```powershell
 $env:JAVA_HOME = "$env:LOCALAPPDATA\Programs\Eclipse Adoptium\jdk-17.0.20.1+1"
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 .\gradlew.bat testDebugUnitTest assembleDebug
-.\adb install -r app\build\outputs\apk\debug\app-debug.apk
+& "$env:ANDROID_HOME\platform-tools\adb.exe" -s <serial> install -r app\build\outputs\apk\debug\app-debug.apk
 ```
 
+
+## Format CM1
 
 ASCII, bez końcowego znaku nowej linii:
 
