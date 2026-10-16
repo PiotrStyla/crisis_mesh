@@ -1,6 +1,9 @@
 __pycache__/
 .build/
 .venv/
+.gradle/
+build/
+local.properties
 *.gguf
 *.safetensors
 *.exe

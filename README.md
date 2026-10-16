@@ -59,7 +59,46 @@ python main.py extract --binary $binary --model $model --text-file message.txt
 
 Build nie usuwa katalogów; można wskazać istniejący build. Podczas weryfikacji użyto istniejącego `GoLLem_on_watch/vendor/llama.cpp/build-host`; do nowej kompilacji powyższe polecenie używa lokalnego `.build`. MinGW musi być na PATH również podczas inferencji, ze względu na biblioteki runtime. Nie używaj `--log-disable`: w tej wersji llama-completion wyłącza również wypisywanie wygenerowanego tekstu.
 
-## Format CM1
+## Aplikacja Android / Wear OS (`app/`)
+
+Moduł Kotlin + Compose, **zero uprawnień** (bez internetu, lokalizacji, Bluetooth):
+ekran formularza, lokalna historia i import/eksport pakietów CM1. Działa na
+telefonie i zegarku (minSdk 26, target 35). Dane trafiają wyłącznie do
+prywatnego pliku aplikacji (`filesDir/reports.json`). Notatka z formularza jest
+lokalna i **nie wchodzi w pakiet CM1**.
+
+Udostępnianie otwiera wyłącznie systemowy wybór aplikacji (share sheet) z
+tekstem pakietu — nie jest to warstwa mesh. Aplikacja nie nawiązuje żadnych
+połączeń radiowych ani sieciowych.
+
+### Co zweryfikowano (emulator `Wear5_LargeRound`, API 34, 2026-10-16)
+
+| Ścieżka | Wynik |
+|---|---|
+| Formularz: 3 osoby / 1 dziecko / nieznane zagrożenie / woda → zapis | baner `Zapisano · CM1\|3\|1\|unknown\|water · 21 B` — bajt w bajt z pakietem Python |
+| Trwałość: `force-stop` + ponowne uruchomienie | historia nadal zawiera raport |
+| Import poprawnego `CM1\|5\|2\|flood\|rescue` | podgląd: `Osoby łącznie: 5; w tym dzieci: 2… powódź… ratunek`, zapis → `Historia (2)` |
+| Import niekanonicznego `CM1\|01\|0\|fire\|rescue` | `Pakiet odrzucony: Noncanonical packet` (bez zapisu) |
+| Usuwanie z potwierdzeniem | `Anuluj` zostawia `Historia (2)`, `Usuń` → `Historia (1)` |
+| Udostępnianie | intent `ACTION_SEND` otwiera handler systemu (na tym emulatorze Bluetooth OPP) |
+| Testy JVM | `./gradlew testDebugUnitTest` — 7 testów kodu zgodnych z `test_codec.py` |
+
+Zawartość udostępnianego `EXTRA_TEXT` jest odczytana z kodu, nie zaobserwowana
+w drugiej aplikacji. Automatyzacja UI używa `contentDescription` (`save`,
+`people-plus`, `choice-water`, `import-commit`, `delete`…).
+
+### Budowa
+
+Wymagania: JDK 17, Android SDK (platforma 35, build-tools), Gradle 8.10.2
+(wrapper w repo; jeśli `gradlew` zgłosi brak `gradle-wrapper.jar`, uruchom
+`gradle wrapper --gradle-version 8.10.2` albo otwórz projekt w Android Studio):
+
+```powershell
+$env:JAVA_HOME = "$env:LOCALAPPDATA\Programs\Eclipse Adoptium\jdk-17.0.20.1+1"
+.\gradlew.bat testDebugUnitTest assembleDebug
+.\adb install -r app\build\outputs\apk\debug\app-debug.apk
+```
+
 
 ASCII, bez końcowego znaku nowej linii:
 
