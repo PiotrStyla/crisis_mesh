@@ -68,6 +68,26 @@ private fun App() {
     var importPreview by remember { mutableStateOf<Pair<String, String>?>(null) }
     var importError by remember { mutableStateOf<String?>(null) }
     var confirmDelete by remember { mutableStateOf<StoredReport?>(null) }
+    var meshPeer by remember { mutableStateOf("") }
+    var meshStatus by remember { mutableStateOf("Nasłuch: wyłączony") }
+    val mesh = remember { TcpMeshTransport() }
+    val refresh = { reports.clear(); reports.addAll(store.load()) }
+    val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
+    // Worker-thread callbacks marshalled to the UI thread for every status.
+    val onStatus: (String) -> Unit = { s -> mainHandler.post { meshStatus = s } }
+    val onPacket: (ByteArray) -> Unit = { bytes ->
+        val result = runCatching { Codec.unpack(bytes) } // strict frame, no trim
+        mainHandler.post {
+            if (result.isSuccess) {
+                store.add(result.getOrThrow(), "mesh", "")
+                refresh()
+                meshStatus = "Odebrano ${String(bytes, Charsets.US_ASCII)}"
+            } else {
+                meshStatus = "Odrzucono niepoprawny pakiet"
+            }
+        }
+    }
+    DisposableEffect(Unit) { onDispose { mesh.close() } }
 
     MaterialTheme(colorScheme = darkColorScheme(
         primary = Amber, onPrimary = Ink, background = Ink, surface = Panel,
@@ -103,7 +123,7 @@ private fun App() {
                                     val report = Codec.validate(people, children, hazard, need)
                                     val packet = String(Codec.pack(report), Charsets.US_ASCII)
                                     store.add(report, "form", note)
-                                    reports.addAll(store.load().drop(reports.size))
+                                    refresh()
                                     lastSaved = "Zapisano · $packet · ${packet.toByteArray().size} B"
                                     saveError = null
                                     note = ""
@@ -137,11 +157,17 @@ private fun App() {
                     onCommit = { preview ->
                         val report = Codec.unpackText(preview.first)
                         store.add(report, "import", "")
-                        reports.addAll(store.load().drop(reports.size))
+                        refresh()
                         importText = ""
                         importPreview = null
                         lastSaved = "Zapisano · ${preview.first} · ${preview.first.toByteArray().size} B"
                     },
+                )
+
+                MeshCard(
+                    peer = meshPeer, onPeer = { meshPeer = it },
+                    status = meshStatus,
+                    onListen = { mesh.listen(8765, onPacket, onStatus) },
                 )
 
                 Text("Historia (${reports.size})",
@@ -156,6 +182,13 @@ private fun App() {
                 reports.reversed().forEach { item ->
                     HistoryRow(
                         item,
+                        onSend = {
+                            if (meshPeer.isBlank()) {
+                                meshStatus = "Podaj adres rozmówcy jako host:port"
+                            } else {
+                                mesh.send(meshPeer, Codec.pack(item.report), onStatus)
+                            }
+                        },
                         onShare = {
                             val packet = String(Codec.pack(item.report), Charsets.US_ASCII)
                             val send = Intent(Intent.ACTION_SEND).apply {
@@ -198,7 +231,7 @@ private fun Header() = Column(
 ) {
     Text("Crisis Mesh", fontSize = 22.sp, letterSpacing = 1.sp, textAlign = TextAlign.Center)
     Text(
-        "Offline · bez uprawnień · bez transmisji",
+        "Bez chmury · tylko sieć lokalna",
         fontSize = 12.sp, color = Dim, textAlign = TextAlign.Center,
         modifier = Modifier.cd("status"),
     )
@@ -271,6 +304,28 @@ private fun ChoiceRow(label: String, options: Map<String, String>, selected: Str
 }
 
 @Composable
+private fun MeshCard(
+    peer: String, onPeer: (String) -> Unit, status: String, onListen: () -> Unit,
+) {
+    Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = Panel)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Sieć lokalna (TCP)", fontSize = 14.sp, color = Dim)
+            OutlinedTextField(
+                peer, onPeer, singleLine = true,
+                label = { Text("host:port rozmówcy, np. 10.0.2.2:9001") },
+                modifier = Modifier.fillMaxWidth().cd("mesh-peer"),
+                textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 13.sp),
+            )
+            Button(
+                onClick = onListen,
+                modifier = Modifier.fillMaxWidth().cd("mesh-listen"),
+            ) { Text("Nasłuchuj (port 8765)") }
+            Text(status, fontSize = 12.sp, color = Amber, modifier = Modifier.cd("mesh-status"))
+        }
+    }
+}
+
+@Composable
 private fun ImportCard(
     text: String, onText: (String) -> Unit, onImport: () -> Unit,
     error: String?, preview: Pair<String, String>?, onCommit: (Pair<String, String>) -> Unit,
@@ -302,7 +357,7 @@ private fun ImportCard(
 }
 
 @Composable
-private fun HistoryRow(item: StoredReport, onShare: () -> Unit, onDelete: () -> Unit) {
+private fun HistoryRow(item: StoredReport, onSend: () -> Unit, onShare: () -> Unit, onDelete: () -> Unit) {
     val packet = remember(item) { String(Codec.pack(item.report), Charsets.US_ASCII) }
     val stamp = remember(item) {
         DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(item.createdAtMillis))
@@ -313,12 +368,15 @@ private fun HistoryRow(item: StoredReport, onShare: () -> Unit, onDelete: () -> 
             Text(Codec.render(item.report), fontSize = 14.sp)
             Text(packet, fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = Amber)
             if (item.note.isNotBlank()) Text(item.note, fontSize = 13.sp, color = Dim)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onSend, modifier = Modifier.cd("send")) {
+                    Text("Wyślij", fontSize = 13.sp)
+                }
                 TextButton(onClick = onShare, modifier = Modifier.cd("share")) {
-                    Text("Udostępnij")
+                    Text("Udostępnij", fontSize = 13.sp)
                 }
                 TextButton(onClick = onDelete, modifier = Modifier.cd("delete")) {
-                    Text("Usuń", color = MaterialTheme.colorScheme.error)
+                    Text("Usuń", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
                 }
             }
         }

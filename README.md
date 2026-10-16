@@ -61,15 +61,19 @@ Build nie usuwa katalogów; można wskazać istniejący build. Podczas weryfikac
 
 ## Aplikacja Android / Wear OS (`app/`)
 
-Moduł Kotlin + Compose, **zero uprawnień** (bez internetu, lokalizacji, Bluetooth):
-ekran formularza, lokalna historia i import/eksport pakietów CM1. Działa na
+Moduł Kotlin + Compose, uprawnienie **wyłącznie `INTERNET`** (gniazda do
+lokalnego transportu `MeshTransport`; żaden serwer zewnętrzny nie jest
+wołany — brak lokalizacji, Bluetooth, reklam i chmury): ekran formularza,
+lokalna historia, import/eksport pakietów CM1 oraz karta sieci lokalnej.
+Działa na
 telefonie i zegarku (minSdk 26, target 35). Dane trafiają wyłącznie do
 prywatnego pliku aplikacji (`filesDir/reports.json`). Notatka z formularza jest
 lokalna i **nie wchodzi w pakiet CM1**.
 
 Udostępnianie otwiera wyłącznie systemowy wybór aplikacji (share sheet) z
-tekstem pakietu — nie jest to warstwa mesh. Aplikacja nie nawiązuje żadnych
-połączeń radiowych ani sieciowych.
+tekstem pakietu. Jedyny aktywny kanał sieciowy to transport `MeshTransport`
+(gniazda TCP w sieci lokalnej) opisany niżej — żaden adres zewnętrzny nie jest
+wołany. Własnej warstwy mesh (multi-hop, odkrywanie węzłów) jeszcze nie ma.
 
 ### Co zweryfikowano (emulator `Wear5_LargeRound`, API 34, 2026-10-16)
 
@@ -87,7 +91,50 @@ Zawartość udostępnianego `EXTRA_TEXT` jest odczytana z kodu, nie zaobserwowan
 w drugiej aplikacji. Automatyzacja UI używa `contentDescription` (`save`,
 `people-plus`, `choice-water`, `import-commit`, `delete`…).
 
-### Budowa
+### Transport: `MeshTransport` (TCP, sieć lokalna)
+
+Szczelina (seam) między pakietami CM1 a warstwą bitową: interfejs
+`listen/send/close`, adapter `TcpMeshTransport` — jedno połączenie TCP na
+pakiet, ramka `4 B` długość (big-endian) + payload (limit 1024 B), timeouty
+3 s (łączenie) / 10 s (odbiór), bez odkrywania węzłów i bez stanu między
+pakietami. Odbiorca waliduje bajty przez ten sam `Codec.unpack` co import:
+pakiet niekanoniczny nie trafia do historii.
+
+Testy JVM (`TcpMeshTransportTest` + `test_codec`, razem 11 testów w
+`./gradlew testDebugUnitTest`): dokładny roundtrip bajtów po pętli, błędny
+adres, nieosiągalny rówieśnik, restart nasłuchu po `close()`.
+
+Test dwu-urządzeniowy (emulatory, ten sam APK na obu):
+
+```powershell
+adb -s <wear> forward tcp:9001 tcp:8765    # host:9001 -> zegarek:8765
+# zegarek: przycisk "Nasłuchuj (port 8765)"
+# telefon: pole rozmówcy 10.0.2.2:9001, przy raporcie "Wyślij"
+```
+
+Ograniczenia, wprost: TCP to pierwszy adapter, **nie mesh** — brak multi-hop,
+redundancji i odkrywania; `10.0.2.2` to pętla emulatora, nie adres w terenie.
+Dla kryzysu docelowym łączem są BLE / WiFi Aware pod ten sam interfejs
+(wymagają sprzętu — emulatory nie mają radiowy hardware). Prawdziwy mesh
+multi-hop to osobny, przyszły etap.
+
+Wyniki testu dwu-urządzeniowego (wear `Wear5_LargeRound` ↔ telefon `LLM_API`,
+oba emulatory, 2026-10-17):
+
+| Kierunek | Dowód |
+|---|---|
+| telefon → zegarek | telefon: `Wysłano 23 B → 10.0.2.2:9001`; zegarek: `Odebrano CM1\|9\|4\|collapse\|rescue`, `Historia (1)` → `(2)`, wpis źródła `mesh` |
+| zegarek → telefon | zegarek: `Wysłano 23 B → 10.0.2.2:9002`; telefon: `Odebrano CM1\|9\|4\|collapse\|rescue`, `Historia (3)` → `(4)` |
+| przechwycenie bajtów zegarka (host:9701) | dokładnie 27 B: `00000017` + `434d317c…726573637565` = `CM1\|9\|4\|collapse\|rescue` |
+| ramka niepoprawna | walidacja po stronie odbiorcy przez `Codec.unpack` (bez appendu do historii) |
+
+Obserwacja nie w pełni wyjaśniona: przy **pierwszym** połączeniu przez świeżo
+utworzony `adb forward` odbiorca raz zanotował `Błąd odbioru: null` (EOF przed
+danymi); kolejne wysyłki przez ten sam tunel i każde połączenie z hosta
+docierały poprawnie — traktujemy to jak artefakt zestawiania tunelu emulatora,
+nie jako błąd protokołu aplikacji `[INFERENCE]`. Brak deduplikacji: powtórzony
+pakiet dopisuje kolejny wpis (zaobserwowane przy `(3)` → `(4)`).
+
 
 Wymagania: JDK 17, Android SDK (platforma 35, build-tools), Gradle 8.10.2
 (wrapper w repo; jeśli `gradlew` zgłosi brak `gradle-wrapper.jar`, uruchom
