@@ -1,6 +1,6 @@
 # Crisis Mesh — tablica architektury
 
-Stan odniesienia: [implementacja BLE `3392278`](https://github.com/PiotrStyla/crisis_mesh/commit/3392278), 2026-10-19.
+Stan: **wersja 1.1 / CMF2 — trwała historia, deduplikacja i kolejka offline**.
 Ta sama aplikacja Kotlin/Compose działa na telefonie i zegarku; każde urządzenie
 może być nadawcą, odbiorcą i przekaźnikiem. Komputer/ADB służyły do sterowania
 podczas testów, **nie są wymaganym serwerem komunikacji**.
@@ -22,10 +22,11 @@ flowchart TB
     subgraph sender["NADAWCA: telefon albo zegarek"]
         direction LR
         form["Formularz lub import CM1"] --> codec["Codec\nwalidacja czterech pól"]
-        codec --> local["ReportStore\nlokalna historia raportów"]
+        codec --> local["ReportStore / SQLite\nlokalna historia raportów"]
         local --> send["Użytkownik naciska Wyślij"]
         send --> publish["MeshNode.publish\nnowy UUID, limit przeskoków"]
-        publish --> envelope["Koperta CMF1\nUUID + hopsLeft + CM1"]
+        publish --> envelope["SQLite COMMIT\ntrwała kolejka CMF2"]
+        envelope --> retry["Próba / ponowienie\nte same UUID i bajty"]
     end
     future -.-> sender
 
@@ -39,13 +40,15 @@ flowchart TB
     subgraph receiver["ODBIORCA / PRZEKAŹNIK: telefon albo zegarek"]
         direction LR
         incoming["MeshTransport\npełna odebrana ramka"] --> valid["MeshMessage.decode + Codec.unpack\nsprawdzenie koperty i treści"]
-        valid --> seen{"Nowy UUID?"}
-        seen -->|nie| drop["Pomiń duplikat"]
-        seen -->|tak| deliver["Callback do UI\nprzekazanie CM1"]
-        deliver --> store["ReportStore\nzapis ze źródłem mesh"]
-        store --> render["Codec.render\nopis i historia bez LLM"]
-        seen -->|"tak i hopsLeft > 0"| forward["MeshNode.forward\nhopsLeft minus 1"]
+        valid --> seen{"UUID i treść\nw transakcji SQLite"}
+        seen -->|"znany, zgodna treść"| duplicate["Bez nowego raportu"]
+        duplicate --> ack["Po COMMIT: potwierdzenie\nTCP 0x07 / ostatni ATT"]
+        seen -->|nowy| store["COMMIT: raport + UUID\n+ ewentualna dalsza kolejka"]
+        store --> ack
+        store --> render["UI + Codec.render\nopis i historia bez LLM"]
+        store -->|"hopsLeft > 0"| forward["Worker dalszej kolejki\nbudżet już zmniejszony"]
         forward --> next["Skonfigurowani sąsiedzi\nta sama ścieżka odbioru"]
+        seen -->|"konflikt lub błąd"| reject["Rollback / odrzucenie\nbez potwierdzenia"]
     end
     link --> receiver
 ```
@@ -54,12 +57,12 @@ flowchart TB
 
 - **LLM nie jest elementem transportu.** Ma proponować pola, nie interpretować
   odebranych pakietów, routować wiadomości ani samodzielnie alarmować.
-- **Zapis i forwarding są rozdzielone.** Callback odbioru kolejkuje zapis w UI;
-  przekaźnik nie czeka na potwierdzenie trwałego zapisu. Diagram nie oznacza,
-  że dane są już na dysku w chwili przekazania dalej.
-- **ACK łącza nie jest potwierdzeniem końcowego dostarczenia.** TCP odpowiada
-  `0x06` po pełnej ramce; BLE odpowiada na kolejne zapisy ATT. To nie dowodzi
-  poprawności faktów, zapisu w historii ani odbioru przez dalsze węzły.
+- **Jedna transakcja odbioru:** raport, trwały UUID i kolejka dalszego
+  przekazania zapisują się razem. Błąd wycofuje wszystkie te zmiany. UI tylko
+  odświeża stan po COMMIT — nie decyduje o potwierdzeniu sieciowym.
+- **Potwierdzenie dotyczy sąsiada, nie całej sieci.** TCP odpowiada `0x07`,
+  a ostatnia odpowiedź ATT BLE następuje po COMMIT lub rozpoznaniu trwałego
+  duplikatu. To nie jest dowód dostarczenia dalej ani kryptograficzny dowód zapisu.
 - **Bezpieczeństwo jest osobnym brakującym elementem.** Poprawny CM1/UUID
   nie uwierzytelnia źródła. Brak szyfrowania i ochrony przed fałszywymi raportami.
 
@@ -69,24 +72,41 @@ flowchart TB
 |---|---|
 | Raport lokalny | Cztery pola, lokalna notatka, źródło i czas urządzenia. Notatka nie jest wysyłana. |
 | CM1 | `CM1\|people\|children\|hazard\|need`; stratny skrót, nie pełna treść zgłoszenia. Maks. 28 B dla tego schematu. |
-| CMF1 | 4 B wersji + 16 B UUID + 1 B budżetu przekazań + CM1. Bez lokalizacji, czasu zgłoszenia, podpisu i szyfrowania. |
-| TCP | 4-bajtowa długość big-endian + CMF1; jedno połączenie na ramkę. |
-| BLE | Ta sama długość + CMF1, dzielone na potwierdzane zapisy ATT do 20 B. |
-| Routing | Domyślnie maks. 4 połączenia od źródła; konfiguracja 1–8. Odbiorca z `hopsLeft = 0` zapisuje, ale nie przekazuje dalej. |
-| Deduplikacja | Ostatnie 4096 UUID w pamięci procesu. Restart usuwa ten stan. Kolejne świadome „Wyślij” nadaje nowy UUID. |
+| CMF2 | 4 B wersji + 16 B UUID + 1 B budżetu przekazań + CM1. Bez lokalizacji, czasu zgłoszenia, podpisu i szyfrowania. Nie współpracuje z CMF1. |
+| TCP | 4-bajtowa długość big-endian + CMF2; po COMMIT odpowiedź `0x07`. Stare `0x06` nie zwalnia kolejki. |
+| BLE | Ta sama długość + CMF2, potwierdzane zapisy ATT do 20 B; nowe UUID usługi/charakterystyki dla protokołu 1.1. |
+| Routing | Domyślnie maks. 4 połączenia od źródła (1–8). Odbiorca z `hopsLeft = 0` zapisuje, ale nie przekazuje dalej. |
+| Deduplikacja | UUID i SHA-256 treści w SQLite. Restart i usunięcie raportu nie usuwają tego znacznika. Ręczne „Wyślij” tworzy nowy UUID. |
+| Kolejka | Osobne dostarczenia dla TCP/BLE i każdego sąsiada. Trwałe ponowienia używają tego samego UUID; sukces usuwa bajty ramki z kolejki i zachowuje stan potwierdzenia. |
 
 ## Gdzie jest implementacja
 
 | Moduł | Odpowiedzialność |
 |---|---|
-| [MainActivity.kt](app/src/main/java/dev/crisismesh/MainActivity.kt) | Ekran Compose, formularz/import, wybór TCP/BLE, uprawnienia, akcje użytkownika i callback zapisu. |
+| [MainActivity.kt](app/src/main/java/dev/crisismesh/MainActivity.kt) | Ekran Compose, formularz/import, wybór TCP/BLE, uprawnienia i kontrola kolejki. Odbiór odświeża UI już po zapisie. |
 | [Codec.kt](app/src/main/java/dev/crisismesh/Codec.kt) | Walidacja, kodowanie CM1 i deterministyczny opis po polsku. |
-| [ReportStore.kt](app/src/main/java/dev/crisismesh/ReportStore.kt) | Prywatny `files/reports.json`; zapis nie jest transakcyjny. |
-| [MeshNode.kt](app/src/main/java/dev/crisismesh/MeshNode.kt) | Koperta CMF1, UUID, deduplikacja i best-effort forwarding. |
+| [ReportStore.kt](app/src/main/java/dev/crisismesh/ReportStore.kt) | SQLite `crisis.db`: raporty, skróty UUID, kolejka, sąsiedzi i konfiguracja. Jednorazowa, transakcyjna migracja z zachowanego JSON. |
+| [MeshNode.kt](app/src/main/java/dev/crisismesh/MeshNode.kt) | Koperta CMF2, publikowanie i ponawianie trwałej kolejki. Przekazywanie jest planowane atomowo przez `ReportStore.accept`. |
 | [MeshTransport.kt](app/src/main/java/dev/crisismesh/MeshTransport.kt) | Interfejs transportu i implementacja TCP. |
 | [BleMeshTransport.kt](app/src/main/java/dev/crisismesh/BleMeshTransport.kt) | Serwer/klient GATT, reklamowanie usługi, skan i potwierdzane zapisy. |
 | [MeshFrames.kt](app/src/main/java/dev/crisismesh/MeshFrames.kt) | Fragmentacja i ograniczony bufor składania ramek BLE. |
 | [backend.py](backend.py), [benchmark.py](benchmark.py) | Oddzielny eksperyment GoLLeM na komputerze, przez patchowany llama.cpp; nie backend produkcyjny aplikacji. |
+
+## Praca offline i wznowienie
+
+- Bez sąsiada wiadomość czeka w SQLite. Zastosowanie listy przypisuje te
+  niezaadresowane wiadomości do sąsiadów.
+- W żywym procesie aplikacji worker podejmuje kolejną próbę co około 20 s.
+  Po force-stop lub wyłączeniu trzeba ponownie uruchomić aplikację; nie ma
+  jeszcze gwarantowanej pracy w tle.
+- Wybór transportu, sąsiedzi i żądanie nasłuchu są zapamiętywane. Uprawnienia
+  Bluetooth nadal są konieczne; brak uprawnień nie kasuje kolejki.
+- Zmienny MAC BLE wymaga ponownego skanu i **jawnego** „Ponów do obecnych
+  sąsiadów”. Zachowuje to UUID, ale zmienia cele oczekujących dostarczeń.
+  Nie ma jeszcze stałej tożsamości węzła ani automatycznego rozpoznawania go po zmianie MAC.
+- Usunięcie lokalnego raportu anuluje jego oczekujące wysyłki, ale nie cofa
+  już wysłanych kopii. Zachowany plik migracyjny JSON nie jest usuwany.
+
 
 ## Kontrakt planowanego lokalnego modelu
 
@@ -117,9 +137,9 @@ na tablicy opisuje cel integracji, nie działającą funkcję.
 |---|---|
 | Telefon ↔ zegarek przez BLE | Sprawdzone na Galaxy A22 5G i Galaxy Watch 4, także bez Wi-Fi telefonu. [Wyniki](evidence/ble-smoke.json), [telefon](evidence/ble-phone.png), [zegarek](evidence/ble-watch-report.png). |
 | TCP przez LAN / hotspot | Sprawdzone na fizycznym telefonie; szczegóły w [README](README.md#weryfikacja-na-fizycznych-urządzeniach-2026-10-19). |
-| Łańcuch trzech węzłów i pętle | Sprawdzone na TCP/JVM i emulatorach. Nie jest to dowód trzywęzłowego BLE. |
+| Łańcuch trzech węzłów i pętle | Sprawdzone przez TCP loopback z SQLite w testach instrumentacyjnych; historycznie także na emulatorach. Nie jest to dowód trzywęzłowego BLE. |
 | Radio BLE z trzema urządzeniami | Niesprawdzone — potrzebny trzeci fizyczny węzeł. |
-| Trwała deduplikacja, kolejka offline, retry | Brak implementacji. |
+| Trwała deduplikacja, kolejka offline, retry | Zaimplementowane. Restart nadawcy i odbiorcy, powrót sąsiada TCP/BLE oraz zmiana MAC sprawdzone na sprzęcie. [Wyniki](evidence/durable-smoke.json). |
 | Praca w tle, zasięg, bateria | Brak gwarancji i testów operacyjnych. |
 | Szyfrowanie i uwierzytelnianie | Brak implementacji. Tylko prototyp w zaufanym środowisku. |
 | Lokalny LLM w aplikacji | Plan integracji; obecnie niezależny eksperyment Python. |

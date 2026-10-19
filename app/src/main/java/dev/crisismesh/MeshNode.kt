@@ -2,8 +2,11 @@ package dev.crisismesh
 
 import java.nio.ByteBuffer
 import java.util.UUID
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
-/** CM1 stays unchanged; CMF1 is a versioned forwarding envelope, not authentication. */
+/** CMF2 requires a committed receive transaction before a successful transport receipt. */
 data class MeshMessage(val id: UUID, val hopsLeft: Int, val payload: ByteArray) {
     fun encode(): ByteArray {
         require(hopsLeft in 0..7) { "Invalid hop budget" }
@@ -12,9 +15,8 @@ data class MeshMessage(val id: UUID, val hopsLeft: Int, val payload: ByteArray) 
             .putInt(MAGIC).putLong(id.mostSignificantBits).putLong(id.leastSignificantBits)
             .put(hopsLeft.toByte()).put(payload).array()
     }
-
     companion object {
-        private const val MAGIC = 0x434d4631 // CMF1
+        private const val MAGIC = 0x434d4632 // CMF2: no compatibility with frame-only receipts.
         fun decode(bytes: ByteArray): MeshMessage {
             require(bytes.size in 22..101) { "Invalid envelope length" }
             val buffer = ByteBuffer.wrap(bytes)
@@ -24,76 +26,139 @@ data class MeshMessage(val id: UUID, val hopsLeft: Int, val payload: ByteArray) 
             require(hops in 0..7) { "Invalid hop budget" }
             val payload = ByteArray(buffer.remaining())
             buffer.get(payload)
-            Codec.unpack(payload) // Reject before remembering or forwarding the ID.
+            Codec.unpack(payload)
             return MeshMessage(id, hops, payload)
         }
     }
 }
 
-/** Best-effort flooding over explicitly configured peers; no discovery or offline outbox. */
-class MeshNode(private val transport: MeshTransport = TcpMeshTransport()) {
-    @Volatile private var peers: List<String> = emptyList()
-    private val seen = LinkedHashSet<UUID>()
+/** Durable per-neighbor queue. Polling belongs to this live app instance, not a background service. */
+class MeshNode(
+    private val store: ReportStore,
+    private val transport: MeshTransport,
+    val kind: String,
+    private val canSend: () -> Boolean = { true },
+) {
+    private val worker = Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "mesh-outbox").apply { isDaemon = true }
+    }
+    private val started = AtomicBoolean(false)
+    private val busy = AtomicBoolean(false)
+    @Volatile private var closed = false
+    @Volatile private var changed: () -> Unit = {}
+    @Volatile private var status: (String) -> Unit = {}
+    @Volatile private var received: (ByteArray) -> Unit = {}
+
+    fun start(onChanged: () -> Unit, onStatus: (String) -> Unit) {
+        changed = onChanged
+        status = onStatus
+        if (store.listenRequested(kind)) {
+            if (canSend()) listen(8765, {}, onStatus)
+            else status("Odbiór oczekuje na uprawnienia Bluetooth")
+        }
+        startWorker()
+    }
+
+    private fun startWorker() {
+        if (started.compareAndSet(false, true)) {
+            worker.scheduleWithFixedDelay({ drain() }, 0, 20, TimeUnit.SECONDS)
+        }
+    }
+    private fun wakeQueue() {
+        startWorker()
+        if (!closed) runCatching { worker.execute { drain() } }
+    }
 
     fun configurePeers(text: String) {
         val next = text.split(',', '\n').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
         require(next.size <= 8) { "Maksymalnie 8 sąsiadów" }
-        require(next.all { it.isPeerAddress() }) {
-            "Podaj sąsiadów jako host:port albo MAC BLE, oddzielone przecinkiem"
-        }
-        peers = next
-    }
-
-    /** A peer is either a TCP endpoint or a BLE MAC; the transport decides which. */
-    private fun String.isPeerAddress(): Boolean {
-        if (MAC_ADDRESS.matches(this)) return true
-        val cut = lastIndexOf(':')
-        return cut > 0 && substring(0, cut).none { it.isWhitespace() } &&
-            substring(cut + 1).toIntOrNull() in 1..65535
+        require(next.all { address ->
+            if (kind == "ble") MAC_ADDRESS.matches(address)
+            else {
+                val cut = address.lastIndexOf(':')
+                cut > 0 && address.substring(0, cut).none { it.isWhitespace() } &&
+                    address.substring(cut + 1).toIntOrNull() in 1..65535
+            }
+        }) { if (kind == "ble") "Podaj adresy MAC BLE po przecinku" else "Podaj adresy host:port po przecinku" }
+        store.configurePeers(kind, next)
+        changed()
+        wakeQueue()
     }
 
     fun listen(port: Int, onPacket: (ByteArray) -> Unit, onStatus: (String) -> Unit) {
-        transport.listen(port, receive@ { bytes ->
-            val message = try {
-                MeshMessage.decode(bytes)
-            } catch (e: IllegalArgumentException) {
-                onStatus("Odrzucono ramkę mesh: ${e.message}")
-                return@receive
-            }
-            if (remember(message.id)) {
-                onPacket(message.payload)
-                if (message.hopsLeft > 0) {
-                    forward(message.copy(hopsLeft = message.hopsLeft - 1), onStatus)
-                }
+        received = onPacket
+        status = onStatus
+        store.requestListen(kind, true)
+        transport.listen(port, { bytes ->
+            try {
+                val message = MeshMessage.decode(bytes)
+                val fresh = store.accept(message, kind) // COMMIT, including any forwarding queue, before ACK.
+                if (fresh) {
+                    runCatching { received(message.payload) }
+                    status("Zapisano ${String(message.payload, Charsets.US_ASCII)}")
+                } else status("Potwierdzono wcześniej przyjęty UUID ${message.id}")
+                changed()
+                wakeQueue()
+            } catch (e: Exception) {
+                status("Odrzucono wiadomość: ${e.message}")
+                throw e // A rejected message must not receive a persistence receipt.
             }
         }, onStatus)
+        startWorker()
     }
 
-    /** A deliberate new send creates a new ID, even for identical report fields. */
-    fun publish(payload: ByteArray, onStatus: (String) -> Unit, maxHops: Int = 4): UUID {
-        require(maxHops in 1..8) { "Hop limit must be 1..8" }
-        require(peers.isNotEmpty()) { "Najpierw zastosuj listę sąsiadów" }
-        Codec.unpack(payload)
-        val message = MeshMessage(UUID.randomUUID(), maxHops - 1, payload)
-        remember(message.id) // A cycle must never deliver the origin's own report again.
-        forward(message, onStatus)
-        return message.id
+    fun stopListening() {
+        store.requestListen(kind, false)
+        transport.close()
+        status("Odbiór wyłączony; kolejka nadal działa przy otwartej aplikacji")
     }
 
-    private fun forward(message: MeshMessage, onStatus: (String) -> Unit) {
-        val bytes = message.encode()
-        peers.forEach { transport.send(it, bytes, onStatus) }
+    /** New user action = new UUID; every automatic retry reuses the stored frame and UUID. */
+    fun publish(payload: ByteArray, maxHops: Int = 4, reportId: String? = null): UUID {
+        val id = store.enqueue(payload, kind, maxHops, reportId)
+        status("Raport w trwałej kolejce: $id")
+        changed()
+        wakeQueue()
+        return id
     }
 
-    @Synchronized private fun remember(id: UUID): Boolean {
-        if (!seen.add(id)) return false
-        if (seen.size > 4096) {
-            val oldest = seen.iterator()
-            oldest.next()
-            oldest.remove()
+    /** Explicitly replace old pending destinations, e.g. after a BLE private address rotated. */
+    fun retryWithCurrentPeers() {
+        store.retargetPending(kind)
+        status("Oczekujące przypisano do obecnych sąsiadów")
+        changed()
+        wakeQueue()
+    }
+
+    private fun drain() {
+        if (closed || !canSend() || !busy.compareAndSet(false, true)) return
+        try {
+            val item = store.nextPending(kind)
+            if (item == null) {
+                busy.set(false)
+                return
+            }
+            transport.send(item.peer, item.frame) { result ->
+                if (closed) { busy.set(false); return@send }
+                try {
+                    store.recordAttempt(item, result)
+                    status(if (result.isSuccess) "Zapis u sąsiada potwierdzony: ${item.peer}"
+                        else "W kolejce: ${item.peer} · ${result.exceptionOrNull()?.message}")
+                    changed()
+                } catch (e: Exception) {
+                    status("Błąd zapisu stanu kolejki: ${e.message}")
+                } finally { busy.set(false) }
+                if (result.isSuccess) wakeQueue()
+            }
+        } catch (e: Exception) {
+            busy.set(false)
+            status("Błąd kolejki: ${e.message}")
         }
-        return true
     }
 
-    fun close() = transport.close()
+    fun close() {
+        closed = true
+        worker.shutdownNow()
+        transport.close()
+    }
 }

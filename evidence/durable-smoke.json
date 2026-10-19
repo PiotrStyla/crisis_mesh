@@ -1,0 +1,92 @@
+{
+  "date": "2026-10-19",
+  "version": "1.1",
+  "protocol": "CMF2",
+  "final_apk_sha256": "a88ff43f224d72629ac5ae9bd52eea7f37a50113b87cddea55eb510cd3a19da0",
+  "artifact_note": "TCP/BLE scenarios exercised the durable transport/store implementation. Final APK was rebuilt afterward with version metadata and a delete-dialog/queue-refresh adjustment; the final APK passed the complete test suites and an actual UI queue-cancellation smoke.",
+  "devices": {
+    "phone": "Samsung Galaxy A22 5G (SM-A226B)",
+    "watch": "Samsung Galaxy Watch 4 (SM-R865F), Android 14"
+  },
+  "migration": {
+    "phone_legacy_reports": 8,
+    "watch_legacy_reports": 5,
+    "preserved": ["order", "id", "createdAtMillis", "source", "people", "children", "hazard", "need", "note"],
+    "legacy_json_unchanged": true,
+    "verification": "All legacy rows compared field-for-field with the real SQLite rows after upgrade"
+  },
+  "test_packet": "CM1|7|2|unknown|water",
+  "tcp": {
+    "message_id": "b7438157-653b-4b96-bd8c-00e5b0d1a9f7",
+    "receiver_initially_stopped": true,
+    "initial_error": "ECONNREFUSED",
+    "sender_force_stopped_then_relaunched": true,
+    "automatic_delivery_after_receiver_return": true,
+    "watch_reports_before": 5,
+    "watch_reports_after": 6,
+    "source_outbox_state": 1,
+    "source_attempts": 2,
+    "confirmed_frame_cleared": true,
+    "receiver_force_stopped_then_relaunched": true,
+    "same_uuid_replay_after_receiver_restart": {"receipt_hex": "07", "watch_reports": 6},
+    "same_uuid_with_conflicting_payload": {"receipt": "EOF without success byte", "watch_reports": 6},
+    "old_cmf1_envelope": {"receipt": "EOF without success byte"},
+    "forwarded_return_to_source": {"phone_reports_before": 9, "phone_reports_after": 9}
+  },
+  "ble": {
+    "message_id": "a218610c-35cf-420d-9c39-585f3405de59",
+    "receiver_initially_stopped": true,
+    "initial_error": "GATT disconnected: 133, expected connected",
+    "sender_force_stopped_then_relaunched": true,
+    "exact_frame_uuid_transport_and_neighbor_preserved": true,
+    "receiver_old_mac": "4D:A8:E4:D7:CE:8C",
+    "receiver_new_mac": "76:50:50:00:70:51",
+    "old_destination_remained_pending_after_new_neighbor_applied": true,
+    "explicit_retry_to_current_neighbors_clicked": true,
+    "message_uuid_preserved_after_readdressing": true,
+    "phone_wifi_during_delivery": "Wifi is disabled",
+    "cellular_data_disabled": false,
+    "watch_reports_before": 6,
+    "watch_reports_after": 7,
+    "watch_rows_for_message_uuid": 1,
+    "phone_reports_before": 9,
+    "phone_reports_after": 9,
+    "source_outbox_state": 1,
+    "confirmed_frame_cleared": true,
+    "forwarded_return_to_source": "persisted duplicate recognized; source history remains 9"
+  },
+  "final_build_ui_cancellation": {
+    "temporary_report": "CM1|0|0|unknown|unknown",
+    "queued_without_neighbors": true,
+    "deleted_via_confirmation_dialog": true,
+    "pending_after_delete": 0,
+    "phone_reports_after_delete": 9,
+    "other_reports_preserved": true
+  },
+  "tests": {
+    "jvm": {"passed": 17, "failed": 0, "skipped": 0},
+    "instrumentation_on_physical_phone": {"passed": 12, "failed": 0},
+    "instrumentation_scope": "Isolated SQLite databases and real loopback sockets; migration rollback, queue persistence, UUID conflict/replay, atomic receive+forward queue, readdressing, deletion cancellation, routing and hop limits"
+  },
+  "final_state": {
+    "phone_reports": 9,
+    "watch_reports": 7,
+    "phone_pending_deliveries": 0,
+    "watch_pending_deliveries": 0,
+    "phone_confirmed_deliveries": 2,
+    "watch_confirmed_deliveries": 2,
+    "apps_force_stopped": true,
+    "phone_wifi_restored": true,
+    "phone_screen_timeout_restored_ms": 300000,
+    "watch_screen_timeout_restored_ms": 15000,
+    "stay_awake_restored_to_zero_on_both": true,
+    "temporary_instrumentation_apk_removed": true
+  },
+  "limits": [
+    "No sudden-power-loss test during physical flash writes",
+    "No end-to-end or authenticated receipt; success is the directly connected neighbor's protocol response after COMMIT",
+    "No guaranteed background service; force-stop pauses retry until app relaunch",
+    "BLE address rotation still requires explicit user selection/readdressing",
+    "No three-device BLE route, range or battery benchmark"
+  ]
+}

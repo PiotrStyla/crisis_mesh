@@ -10,14 +10,14 @@ internal val MAC_ADDRESS = Regex("^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
 
 interface MeshTransport {
     /**
-     * Accept inbound frames on [port] until [close]. [onPacket] receives the
-     * exact payload bytes of every frame; validation belongs to the caller.
-     * [onStatus] may be invoked from background threads.
+     * Accept inbound frames until close. The callback MUST commit the message
+     * before returning, and throw on rejection/storage failure. Success receipts
+     * are emitted only after it returns; callbacks run on transport threads.
      */
     fun listen(port: Int, onPacket: (ByteArray) -> Unit, onStatus: (String) -> Unit)
 
-    /** Worker-thread send; waits for frame receipt, not durable storage or end-to-end delivery. */
-    fun send(address: String, payload: ByteArray, onStatus: (String) -> Unit)
+    /** Success means the peer committed or recognized a previously committed UUID. */
+    fun send(address: String, payload: ByteArray, onComplete: (Result<Unit>) -> Unit)
 
     /** Stop listening; in-flight sends finish on their own. */
     fun close()
@@ -31,7 +31,7 @@ interface MeshTransport {
 class TcpMeshTransport : MeshTransport {
     private object Frame {
         const val MAX = 1024
-        const val RECEIVED = 6
+        const val PERSISTED = 7
     }
 
     @Volatile private var server: java.net.ServerSocket? = null
@@ -69,7 +69,7 @@ class TcpMeshTransport : MeshTransport {
                             synchronized(this) {
                                 if (server !== srv) return@use
                                 onPacket(payload)
-                                sock.getOutputStream().apply { write(Frame.RECEIVED); flush() }
+                                sock.getOutputStream().apply { write(Frame.PERSISTED); flush() }
                             }
                             // Keep the receipt readable until the sender closes. ADB tunnels
                             // can discard buffered output when either endpoint closes early.
@@ -85,10 +85,10 @@ class TcpMeshTransport : MeshTransport {
         }, "mesh-listen").apply { isDaemon = true; start() }
     }
 
-    override fun send(address: String, payload: ByteArray, onStatus: (String) -> Unit) {
+    override fun send(address: String, payload: ByteArray, onComplete: (Result<Unit>) -> Unit) {
         val parsed = parse(address)
         if (parsed == null) {
-            onStatus("Podaj adres rozmówcy jako host:port")
+            onComplete(Result.failure(IllegalArgumentException("Podaj adres rozmówcy jako host:port")))
             return
         }
         val (host, port) = parsed
@@ -101,11 +101,11 @@ class TcpMeshTransport : MeshTransport {
                     out.writeInt(payload.size)
                     out.write(payload)
                     out.flush()
-                    check(sock.getInputStream().read() == Frame.RECEIVED) { "Brak potwierdzenia ramki" }
+                    check(sock.getInputStream().read() == Frame.PERSISTED) { "Brak potwierdzenia zapisu (wymagany CMF2)" }
                 }
-                onStatus("Ramka odebrana przez $host:$port · ${payload.size} B (nie potwierdza zapisu)")
+                onComplete(Result.success(Unit))
             } catch (e: Exception) {
-                onStatus("Błąd wysyłki do $host:$port: ${e.message}")
+                onComplete(Result.failure(e))
             }
         }, "mesh-send").apply { isDaemon = true; start() }
     }

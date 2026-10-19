@@ -13,7 +13,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /** One ordered sequence of acknowledged 20-byte ATT writes per connection.
- * The last write response confirms frame reception, not storage or multi-hop delivery.
+ * The last write response follows the receive COMMIT (or durable duplicate lookup).
  * No pairing, encryption, background service or discovery identity is implied.
  */
 @SuppressLint("MissingPermission")
@@ -118,18 +118,18 @@ class BleMeshTransport(context: Context) : MeshTransport {
         }
     }
 
-    override fun send(address: String, payload: ByteArray, onStatus: (String) -> Unit) {
+    override fun send(address: String, payload: ByteArray, onComplete: (Result<Unit>) -> Unit) {
         if (!MAC_ADDRESS.matches(address)) {
-            onStatus("Podaj adres BLE jako AA:BB:CC:DD:EE:FF")
+            onComplete(Result.failure(IllegalArgumentException("Podaj adres BLE jako AA:BB:CC:DD:EE:FF")))
             return
         }
         val token = synchronized(this) { generation }
         Thread({
             try {
                 sendBlocking(address, payload, token)
-                onStatus("Ramka BLE odebrana przez $address · ${payload.size} B (nie potwierdza zapisu)")
+                onComplete(Result.success(Unit))
             } catch (e: Exception) {
-                onStatus("Błąd wysyłki BLE: ${e.message ?: e.javaClass.simpleName}")
+                onComplete(Result.failure(e))
             }
         }, "mesh-ble-send").apply { isDaemon = true; start() }
     }
@@ -255,7 +255,7 @@ class BleMeshTransport(context: Context) : MeshTransport {
     }
 
     companion object {
-        val SERVICE_UUID: UUID = UUID.fromString("d9e0b811-484c-4a01-9ada-b8700e4182a1")
-        val FRAME_UUID: UUID = UUID.fromString("d9e0b812-484c-4a01-9ada-b8700e4182a1")
+        val SERVICE_UUID: UUID = UUID.fromString("d9e0b821-484c-4a01-9ada-b8700e4182a1")
+        val FRAME_UUID: UUID = UUID.fromString("d9e0b822-484c-4a01-9ada-b8700e4182a1")
     }
 }

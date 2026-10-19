@@ -1,76 +1,91 @@
-// TcpMeshTransportTest.kt - behavioral roundtrip on JVM loopback: exact bytes
-// out, exact bytes in, error paths, and restart after close.
-
 package dev.crisismesh
 
 import org.junit.Assert.*
 import org.junit.Test
 import java.net.ServerSocket
-import java.util.concurrent.CountDownLatch
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicReference
 
 class TcpMeshTransportTest {
-    private fun freePort(): Int = ServerSocket(0).use { it.localPort }
+    private fun port(): Int = ServerSocket(0).use { it.localPort }
+    private val payload = "CM1|5|2|flood|rescue".toByteArray()
 
-    @Test fun roundtripDeliversExactBytes() {
+    @Test fun successArrivesOnlyAfterReceiveCallbackCompletes() {
         val transport = TcpMeshTransport()
-        val port = freePort()
-        val received = AtomicReference<ByteArray>()
-        val gotPacket = CountDownLatch(1)
-        val listening = CountDownLatch(1)
-        val statusLog = AtomicReference("")
-        transport.listen(port, { bytes -> received.set(bytes); gotPacket.countDown() },
-            { s -> statusLog.set(s); if (s.contains("Nasłuch")) listening.countDown() })
-        assertTrue("listener never started", listening.await(5, TimeUnit.SECONDS))
-
-        val payload = "CM1|5|2|flood|rescue".toByteArray(Charsets.US_ASCII)
-        val sent = CountDownLatch(1)
-        val sendLog = AtomicReference("")
-        transport.send("127.0.0.1:$port", payload, { s -> sendLog.set(s); sent.countDown() })
-        assertTrue("send never completed", sent.await(5, TimeUnit.SECONDS))
-        assertTrue("packet never arrived", gotPacket.await(5, TimeUnit.SECONDS))
-        assertArrayEquals(payload, received.get())
-        transport.close()
+        val received = CompletableFuture<ByteArray>()
+        val releaseCommit = java.util.concurrent.CountDownLatch(1)
+        val listening = CompletableFuture<Int>()
+        try {
+            transport.listen(0, { received.complete(it); check(releaseCommit.await(5, TimeUnit.SECONDS)) },
+                { if (it.startsWith("Nasłuch")) listening.complete(it.substringAfterLast(' ').toInt()) })
+            val result = CompletableFuture<Result<Unit>>()
+            transport.send("127.0.0.1:${listening.get(5, TimeUnit.SECONDS)}", payload) { result.complete(it) }
+            assertArrayEquals(payload, received.get(5, TimeUnit.SECONDS))
+            assertFalse("Must not confirm before receive transaction returns", result.isDone)
+            releaseCommit.countDown()
+            assertTrue(result.get(5, TimeUnit.SECONDS).isSuccess)
+        } finally { releaseCommit.countDown(); transport.close() }
     }
 
-    @Test fun badAddressReportsWithoutCrash() {
+    @Test fun storageFailureCannotProduceSuccessReceipt() {
         val transport = TcpMeshTransport()
-        val done = CountDownLatch(1)
-        val log = AtomicReference("")
-        transport.send("not-an-address", ByteArray(4)) { s -> log.set(s); done.countDown() }
-        assertTrue(done.await(5, TimeUnit.SECONDS))
-        assertTrue("got: ${log.get()}", log.get().contains("host:port"))
-        transport.close()
+        val listening = CompletableFuture<Int>()
+        try {
+            transport.listen(0, { throw java.io.IOException("commit failed") },
+                { if (it.startsWith("Nasłuch")) listening.complete(it.substringAfterLast(' ').toInt()) })
+            val result = CompletableFuture<Result<Unit>>()
+            transport.send("127.0.0.1:${listening.get(5, TimeUnit.SECONDS)}", payload) { result.complete(it) }
+            assertTrue(result.get(5, TimeUnit.SECONDS).isFailure)
+        } finally { transport.close() }
     }
 
-    @Test fun unreachablePeerReportsError() {
-        val transport = TcpMeshTransport()
-        val port = freePort() // nothing listens here
-        val done = CountDownLatch(1)
-        val log = AtomicReference("")
-        transport.send("127.0.0.1:$port", ByteArray(4)) { s -> log.set(s); done.countDown() }
-        assertTrue(done.await(5, TimeUnit.SECONDS))
-        assertTrue("got: ${log.get()}", log.get().startsWith("Błąd"))
-        transport.close()
-    }
-
-    @Test fun listenerRestartsAfterClose() {
-        val transport = TcpMeshTransport()
-        val port = freePort()
-        repeat(2) { round ->
-            val got = CountDownLatch(1)
-            val received = AtomicReference<ByteArray>()
-            val listening = CountDownLatch(1)
-            transport.listen(port, { bytes -> received.set(bytes); got.countDown() },
-                { s -> if (s.contains("Nasłuch")) listening.countDown() })
-            assertTrue("listen round $round", listening.await(5, TimeUnit.SECONDS))
-            val sent = CountDownLatch(1)
-            transport.send("127.0.0.1:$port", "round-$round".toByteArray()) { sent.countDown() }
-            assertTrue(sent.await(5, TimeUnit.SECONDS))
-            assertTrue("packet round $round", got.await(5, TimeUnit.SECONDS))
-            assertEquals("round-$round", String(received.get()))
-            transport.close()
+    @Test fun legacyFrameOnlyAckIsNotPersistenceConfirmation() {
+        ServerSocket(0).use { server ->
+            val receiver = Thread {
+                server.accept().use { socket ->
+                    val input = java.io.DataInputStream(socket.getInputStream())
+                    val bytes = ByteArray(input.readInt()); input.readFully(bytes)
+                    socket.getOutputStream().write(6) // CMF1 frame-only receipt, deliberately incompatible.
+                    socket.getOutputStream().flush()
+                    input.read()
+                }
+            }.apply { isDaemon = true; start() }
+            val transport = TcpMeshTransport()
+            try {
+                val result = CompletableFuture<Result<Unit>>()
+                transport.send("127.0.0.1:${server.localPort}", payload) { result.complete(it) }
+                assertTrue(result.get(5, TimeUnit.SECONDS).isFailure)
+            } finally { transport.close(); receiver.join(1000) }
         }
+    }
+
+    @Test fun invalidAddressAndUnreachableNeighborRemainFailures() {
+        val transport = TcpMeshTransport()
+        try {
+            for (address in listOf("not-an-address", "127.0.0.1:${port()}")) {
+                val result = CompletableFuture<Result<Unit>>()
+                transport.send(address, payload) { result.complete(it) }
+                assertTrue(result.get(5, TimeUnit.SECONDS).isFailure)
+            }
+        } finally { transport.close() }
+    }
+
+    @Test fun listenerRestartsWithoutOldAcceptLoopReceivingNewPackets() {
+        val transport = TcpMeshTransport()
+        val samePort = port()
+        try {
+            repeat(2) { round ->
+                val listening = CompletableFuture<Unit>()
+                val received = CompletableFuture<ByteArray>()
+                transport.listen(samePort, { received.complete(it) }, { if (it.startsWith("Nasłuch")) listening.complete(Unit) })
+                listening.get(5, TimeUnit.SECONDS)
+                val sent = CompletableFuture<Result<Unit>>()
+                val report = "round-$round".toByteArray()
+                transport.send("127.0.0.1:$samePort", report) { sent.complete(it) }
+                assertTrue(sent.get(5, TimeUnit.SECONDS).isSuccess)
+                assertArrayEquals(report, received.get(5, TimeUnit.SECONDS))
+                transport.close()
+            }
+        } finally { transport.close() }
     }
 }

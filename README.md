@@ -73,14 +73,15 @@ BLE prosi o uprawnienia dopiero przy skanowaniu, nasłuchu lub wysyłce:
 a na Androidzie 8–11 o lokalizację potrzebną systemowi do skanowania BLE.
 Aplikacja nie pobiera pozycji GPS; na Androidzie 12+ skan ma `neverForLocation`.
 
-Historia jest zapisywana w prywatnym `filesDir/reports.json`; przychodzące
-poprawne raporty zapisują się automatycznie ze źródłem `mesh`. Ta etykieta
-nie uwierzytelnia nadawcy. Notatka z formularza pozostaje lokalna.
-Udostępnianie otwiera systemowy share sheet z samym tekstem CM1.
-Zapis historii nie jest transakcyjny; sprawdzono przetrwanie zamknięcia
-aplikacji po zapisie, nie awarii podczas zapisu.
+Historia, UUID i kolejka dostarczania są zapisane transakcyjnie w prywatnym
+`databases/crisis.db`. Pierwsze uruchomienie wersji **1.1 / CMF2** importuje
+`files/reports.json` dokładnie raz, zachowując identyfikatory, daty, pola i notatki.
+Plik JSON pozostaje nietkniętą kopią migracyjną — nie jest już aktywną historią.
+Błąd migracji wycofuje import i jest pokazany w UI; nie usuwa starego pliku.
+Przychodzące raporty dostają źródło `mesh`, które **nie uwierzytelnia nadawcy**.
+Notatka pozostaje lokalna, a share sheet dostaje tylko tekst CM1.
 
-### Co zweryfikowano (emulator `Wear5_LargeRound`, API 34, 2026-10-16)
+### Historyczna weryfikacja formularza (JSON/CMF1, emulator, 2026-10-16)
 
 | Ścieżka | Wynik |
 |---|---|
@@ -99,28 +100,29 @@ w drugiej aplikacji. Automatyzacja UI używa `contentDescription` (`save`,
 ### Multi-hop: `MeshNode` + `TcpMeshTransport`
 
 W karcie mesh wpisz do 8 adresów `host:port`, oddzielonych przecinkiem,
-i naciśnij **Zastosuj sąsiadów**. Pusta lista oznacza węzeł odbierający bez
-przekazywania. Uruchom **Nasłuchuj :8765** na każdym odbiorcy/przekaźniku.
-Przycisk **Wyślij** przy raporcie publikuje go do zastosowanej listy.
-Edycja pola bez „Zastosuj” nie zmienia aktywnej konfiguracji.
+i naciśnij **Zastosuj sąsiadów**. Przycisk **Wyślij** zapisuje wiadomość w kolejce,
+również przy niedostępnym odbiorcy albo bez skonfigurowanego sąsiada.
+Puste pole nie usuwa wiadomości — oczekują one na późniejsze wskazanie sąsiadów.
+Uruchom **Nasłuchuj :8765** na odbiorcy. Edycja pola bez „Zastosuj” nie zmienia konfiguracji.
 
-Każda świadoma wysyłka tworzy nowy UUID. Odbiorca najpierw sprawdza kopertę
-i kanoniczny CM1, potem blokuje powtórzone UUID, zapisuje raport i przekazuje
-go wszystkim swoim sąsiadom, jeśli pozwala budżet przeskoków. Domyślny limit
-to 4 połączenia od źródła; API dopuszcza 1–8. Odbiorca z budżetem 0 nadal
-otrzymuje raport, ale już go nie przekazuje. Źródło pamięta UUID przed wysłaniem,
-więc powrót przez cykl nie dopisuje mu własnego raportu.
+Świadoma wysyłka tworzy nowy UUID; automatyczne ponowienia zachowują ten sam
+UUID i bajty. Odbiorca waliduje CMF2/CM1 i w jednej transakcji zapisuje raport,
+trwałą deduplikację i ewentualną kolejkę dalszego przekazania. Dopiero po COMMIT
+odpowiada potwierdzeniem. Duplikat tej samej treści jest potwierdzany bez nowego
+wpisu, także po restarcie i po usunięciu raportu z aktywnej historii.
+Ten sam UUID z inną treścią jest odrzucany. Domyślny limit to 4 połączenia od
+źródła (1–8); przy `hopsLeft = 0` odbiorca zapisuje, ale nie przekazuje dalej.
 
-**Protokół sieciowy — czyste przejście, bez zgodności ze starymi ramkami:**
+**Protokół CMF2 wymaga wersji 1.1 na obu urządzeniach. Nie współpracuje z CMF1.**
 
 | Element | Kodowanie |
 |---|---|
 | Długość ramki | 4 B, big-endian, limit transportu 1024 B |
-| Wersja koperty | 4 B ASCII `CMF1` |
+| Wersja koperty | 4 B ASCII `CMF2` |
 | Identyfikator wiadomości | 16 B UUID, most/least significant bits big-endian |
 | Pozostałe przekazania | 1 B, 0–7; nadawca początkowy wpisuje `maxHops - 1` |
 | Treść | kanoniczny CM1, bez zmian w kodeku |
-| Odpowiedź na pełną ramkę | 1 B `0x06`, następnie nadawca zamyka połączenie |
+| Potwierdzenie TCP | 1 B `0x07` po COMMIT / rozpoznaniu trwałego duplikatu |
 
 Koperta dodaje 21 B do CM1. Przykład `CM1|12|2|flood|water`: 20 B treści,
 41 B koperty, 45 B żądania z długością oraz 1 B odpowiedzi — bez narzutu TCP/IP.
@@ -130,32 +132,36 @@ zamykanie po wysłaniu dawało w tunelu ADB EOF i brak raportu albo brak
 potwierdzenia; po zmianie kolejności zamykania opisany niżej scenariusz przeszedł.
 Nie ustalono wewnętrznej przyczyny zachowania ADB.
 
-`0x06` potwierdza **odbiór pełnej ramki**, również duplikatu lub koperty
-odrzuconej przez wyższą warstwę. Nie potwierdza poprawności raportu, zapisu
-na dysku ani dostarczenia przez kolejne węzły. UI mówi to wprost.
+`0x06` było starym potwierdzeniem samej ramki i **nie zwalnia nowej kolejki**.
+`0x07` oznacza przyjęcie przez konkretnego sąsiada, a nie dostarczenie do
+wszystkich dalszych węzłów. Nie uwierzytelnia odbiorcy i nie potwierdza faktów.
 
 **Granice prototypu:**
-- Deduplikacja obejmuje ostatnie 4096 UUID w pamięci procesu, nie trwałą
-  historię. Restart/odtworzenie ekranu lub wyparcie UUID pozwala na ponowny odbiór.
-- Ponowne naciśnięcie „Wyślij” tworzy nową wiadomość, nawet dla identycznej treści.
-- Lista sąsiadów i nasłuch wymagają ponownego ustawienia po odtworzeniu aplikacji.
+- UUID i skróty SHA-256 treści są trwałe w SQLite, bez limitu ostatnich 4096 wpisów.
+  To stan deduplikacji, nie podpis ani mechanizm bezpieczeństwa.
+- Ręczne „Wyślij” nadal tworzy nową wiadomość. Ponowienie kolejki nie zmienia UUID.
+- Wybór TCP/BLE, listy sąsiadów i żądanie nasłuchu są zapamiętywane. Nasłuch
+  wznawia się po uruchomieniu aplikacji, jeśli są wymagane uprawnienia.
 - TCP nie ma discovery. BLE wykrywa wyłącznie reklamujące usługę Crisis Mesh
   urządzenia; wybór i zastosowanie sąsiadów pozostają ręczne.
-- Brak kolejki offline, automatycznego ponawiania, gwarancji dostarczenia,
-  szyfrowania, uwierzytelniania i usługi działającej niezawodnie w tle.
+- Ponowienia działają tylko w żywym procesie aplikacji, co około 20 sekund dla
+  kolejnej oczekującej próby; po sukcesie kolejka przechodzi dalej bez tej zwłoki.
+  Nie ma gwarantowanej pracy w tle, szyfrowania, uwierzytelniania ani gwarancji dostarczenia.
 - Nasłuch TCP jest na wszystkich interfejsach, a BLE przyjmuje nieuwierzytelnione
   zapisy GATT. Dostęp do łącza pozwala podawać fałszywe raporty, zapełniać
   historię lub blokować odbiór. Tylko zaufane urządzenia i środowisko testowe.
 - BLE sprawdzono na dwóch urządzeniach. Nie sprawdzono trzech węzłów BLE,
   zasięgu, zużycia baterii, odporności na zakłócenia ani WiFi Aware.
 
-### Dowody multi-hop
+### Testy bieżącej wersji
 
-`testDebugUnitTest`: 22 testy bez błędów (7 `AppCodecTest`, 4
-`TcpMeshTransportTest`, 6 `MeshNodeTest`, 5 `MeshFramesTest`). Testy routingu używają rzeczywistych
-gniazd loopback: łańcuch bez bezpośredniego A–C, cykl, limit jednego przeskoku,
-tożsamość UUID niezależna od treści, błędny payload bez zatrucia UUID,
-nieznana wersja i niepoprawny budżet.
+17 testów JVM: 7 `AppCodecTest`, 5 `TcpMeshTransportTest`, 5 `MeshFramesTest`.
+12 testów instrumentacyjnych na fizycznym telefonie: 6 `ReportStoreTest` i 6
+`MeshNodeTest`. Testy routingu używają prawdziwych gniazd loopback i SQLite.
+Obejmują migrację, rollback, trwałą kolejkę i UUID, odrzucenie konfliktu treści,
+trzywęzłowe przekazywanie, pętle oraz brak potwierdzenia przy błędzie zapisu.
+
+### Historyczne dowody multi-hop (CMF1)
 
 Smoke na APK: host A → emulator Wear B → emulator telefonu C, przez `adb forward`.
 Host wysyła wyłącznie na port B; B ma sąsiada C. Nie jest to test radia.
@@ -246,21 +252,26 @@ zaakceptuj systemowy dostęp do urządzeń w pobliżu.
 4. Przy raporcie w historii naciśnij **Wyślij**.
 5. Dla komunikacji w obie strony powtórz konfigurację w odwrotnym kierunku.
 
-Przełączenie TCP/BLE zamyka poprzedni transport i czyści pole sąsiadów.
-Po odtworzeniu aplikacji trzeba ponownie wybrać transport i uruchomić nasłuch.
-Adresy MAC w reklamach BLE mogą się zmieniać — po restarcie reklamowania
-zeskanuj sąsiadów ponownie. Wykrycie usługi nie potwierdza tożsamości urządzenia.
+Przełączenie TCP/BLE zamyka poprzedni transport i przywraca zapamiętaną listę
+sąsiadów wybranego łącza. Kolejka każdego łącza jest oddzielna; nie przenosi się
+automatycznie między TCP a BLE. Żądanie nasłuchu jest pamiętane.
 
-`BleMeshTransport` przenosi tę samą kopertę CMF1 i 4-bajtową długość co TCP.
-Serwer GATT reklamuje usługę `d9e0b811-484c-4a01-9ada-b8700e4182a1`;
-charakterystyka zapisu to `d9e0b812-484c-4a01-9ada-b8700e4182a1`.
+MAC BLE może się zmienić. Zeskanuj odbiorcę ponownie, ustaw właściwą listę i
+naciśnij **Zastosuj sąsiadów**, następnie **Ponów do obecnych sąsiadów**.
+Ta jawna akcja zastępuje stare adresy *oczekujących* dostarczeń w danym łączu,
+zachowując UUID. Samo skanowanie lub zastosowanie listy nie przekierowuje
+wiadomości z już przypisanym starym adresem. Stałe tożsamości węzłów nie istnieją.
+
+`BleMeshTransport` przenosi CMF2 i tę samą długość co TCP.
+Usługa GATT to `d9e0b821-484c-4a01-9ada-b8700e4182a1`,
+a charakterystyka zapisu to `d9e0b822-484c-4a01-9ada-b8700e4182a1`.
 Nadawca wysyła kolejne fragmenty do 20 B, mieszczące się w obowiązkowym MTU 23,
 czekając na odpowiedź ATT po każdym fragmencie. Brak negocjacji MTU.
-Ostatnia odpowiedź potwierdza pełną ramkę, **nie zapis ani dostarczenie dalej**.
+Ostatnia odpowiedź ATT następuje po COMMIT odbiorcy; nie potwierdza dostarczenia dalej.
 Ramki mają limit 1024 B; bufor odbiorcy jest ograniczony, zapisy prepare-write
 i niezerowe offsety są odrzucane. Przekazywanie i deduplikacja pozostają w `MeshNode`.
 
-**Końcowy smoke na Galaxy A22 5G i Galaxy Watch 4 (2026-10-19):**
+**Historyczny smoke CMF1 / commit `3392278`, przed trwałą kolejką (2026-10-19):**
 
 | Scenariusz | Telefon | Zegarek |
 |---|---|---|
@@ -285,6 +296,41 @@ Dowody: [telefon](evidence/ble-phone.png),
 [pakiet na zegarku](evidence/ble-watch-report.png),
 [wyniki i SHA-256 APK](evidence/ble-smoke.json).
 
+### Trwała kolejka offline — wyniki CMF2
+
+Migracja na sprzęcie zachowała wszystkie pola i kolejność **8 raportów telefonu
+i 5 zegarka**. Stare pliki JSON są nadal niezmienione. Następnie dodano jeden
+raport testowy: `CM1|7|2|unknown|water`.
+
+| Scenariusz | Wynik |
+|---|---|
+| TCP: odbiorca wyłączony → kolejka → restart nadawcy → powrót odbiorcy | Ten sam UUID; zegarek 5→6 raportów, potwierdzone dostarczenie u nadawcy. |
+| Ten sam UUID po restarcie odbiorcy | ACK `0x07`, historia nadal 6. |
+| UUID z inną treścią / stara koperta CMF1 | Brak potwierdzenia zapisu i brak nowego raportu. |
+| BLE: odbiorca wyłączony → błąd GATT → restart nadawcy | Oczekująca ramka, UUID, wybór BLE i sąsiad zachowane. |
+| BLE: powrót odbiorcy z innym MAC → jawne ponowienie do nowego adresu | Ten sam UUID; zegarek 6→7 raportów, telefon nadal 9. Wi-Fi telefonu było wyłączone. |
+| Powrót wiadomości przez skonfigurowanego sąsiada | Trwała deduplikacja; bez ponownego wpisu u źródła. |
+
+Sprawdzono raporty i stany kolejki przez odczyt rzeczywistej bazy SQLite,
+nie wywnioskowano ich z samego statusu wysyłki.
+Dowody: [wyniki](evidence/durable-smoke.json),
+[kolejka telefonu](evidence/durable-phone-queue.png),
+[kolejka zegarka](evidence/durable-watch-queue.png).
+
+**Ograniczenia i obsługa:**
+- Po force-stop, wyłączeniu lub ubiciu procesu nic nie ponawia wysyłek do czasu
+  ponownego uruchomienia aplikacji. To nie jest jeszcze usługa pracy w tle.
+- Licznik kolejki liczy dostarczenia do sąsiadów, nie unikalne zgłoszenia.
+  Wpis „bez sąsiadów” czeka na zastosowanie listy.
+- Usunięcie raportu anuluje powiązane oczekujące dostarczenia. Nie cofa już
+  dostarczonych kopii i nie usuwa zachowanej kopii migracyjnej JSON.
+  Już rozpoczętego połączenia nie da się w ten sposób odwołać.
+- Znaczniki deduplikacji pozostają po usunięciu raportu, aby duplikat nie
+  odtworzył go w historii. Nie ma automatycznego czyszczenia tych znaczników.
+- Testy restartów i błędów transakcji nie są testem nagłego zaniku zasilania
+  podczas fizycznego zapisu do pamięci urządzenia.
+
+
 
 ### Budowa
 
@@ -300,6 +346,14 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 .\gradlew.bat testDebugUnitTest assembleDebug
 & "$env:ANDROID_HOME\platform-tools\adb.exe" -s <serial> install -r app\build\outputs\apk\debug\app-debug.apk
 ```
+Testy SQLite i routingu na wybranym fizycznym telefonie (nie czyszczą danych użytkownika):
+
+```powershell
+.\gradlew.bat assembleDebugAndroidTest
+& "$env:ANDROID_HOME\platform-tools\adb.exe" -s <serial> install -r app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk
+& "$env:ANDROID_HOME\platform-tools\adb.exe" -s <serial> shell am instrument -w dev.crisismesh.test/androidx.test.runner.AndroidJUnitRunner
+```
+
 
 
 ## Format CM1

@@ -60,7 +60,17 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun App() {
     val context = LocalContext.current
-    val store = remember { ReportStore(context) }
+    val opened = remember { runCatching { ReportStore(context) } }
+    val store = opened.getOrNull()
+    if (store == null) {
+        MaterialTheme {
+            Surface(Modifier.fillMaxSize()) {
+                Text("Nie można otworzyć historii. Stary plik nie został usunięty.\n${opened.exceptionOrNull()?.message}",
+                    modifier = Modifier.padding(24.dp))
+            }
+        }
+        return
+    }
     val reports = remember { mutableStateListOf<StoredReport>().apply { addAll(store.load()) } }
     var people by remember { mutableStateOf<Int?>(null) }
     var children by remember { mutableStateOf<Int?>(null) }
@@ -73,14 +83,21 @@ private fun App() {
     var importPreview by remember { mutableStateOf<Pair<String, String>?>(null) }
     var importError by remember { mutableStateOf<String?>(null) }
     var confirmDelete by remember { mutableStateOf<StoredReport?>(null) }
-    var meshPeer by remember { mutableStateOf("") }
-    var meshStatus by remember { mutableStateOf("Nasłuch: wyłączony") }
-    var transportKind by remember { mutableStateOf("tcp") }
+    var transportKind by remember { mutableStateOf(store.selectedTransport()) }
+    var meshPeer by remember { mutableStateOf(store.peers(transportKind).joinToString(",")) }
+    var meshStatus by remember { mutableStateOf("Kolejka offline gotowa") }
+    var queueInfo by remember { mutableStateOf(store.queueSummary(transportKind)) }
     val bleDevices = remember { mutableStateListOf<String>() }
     val transport = remember(transportKind) {
         if (transportKind == "ble") BleMeshTransport(context) else TcpMeshTransport()
     }
-    val mesh = remember(transport) { MeshNode(transport) }
+    val mesh = remember(transport) {
+        MeshNode(store, transport, transportKind) {
+            transportKind != "ble" || blePermissions().all {
+                ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+            }
+        }
+    }
     // Bluetooth permissions are requested only when BLE is actually used.
     var pendingBleAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -101,24 +118,18 @@ private fun App() {
             permissionLauncher.launch(needed)
         }
     }
-    val refresh = { reports.clear(); reports.addAll(store.load()) }
+    val refresh: () -> Unit = {
+        reports.clear()
+        reports.addAll(store.load())
+        queueInfo = store.queueSummary(transportKind)
+    }
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
     // Worker-thread callbacks marshalled to the UI thread for every status.
     val onStatus: (String) -> Unit = { s -> mainHandler.post { meshStatus = s } }
-    val onPacket: (ByteArray) -> Unit = { bytes ->
-        val result = runCatching { Codec.unpack(bytes) } // strict frame, no trim
-        mainHandler.post {
-            if (result.isSuccess) {
-                store.add(result.getOrThrow(), "mesh", "")
-                refresh()
-                meshStatus = "Odebrano ${String(bytes, Charsets.US_ASCII)}"
-            } else {
-                meshStatus = "Odrzucono niepoprawny pakiet"
-            }
-        }
-    }
+    val onPacket: (ByteArray) -> Unit = { mainHandler.post { refresh() } }
     DisposableEffect(transport) {
         val node = mesh
+        node.start({ mainHandler.post { refresh() } }, onStatus)
         onDispose { node.close() }
     }
 
@@ -201,13 +212,21 @@ private fun App() {
                     transportKind = transportKind,
                     onTransport = { kind ->
                         pendingBleAction = null
+                        store.selectTransport(kind)
                         transportKind = kind
-                        meshPeer = ""
+                        meshPeer = store.peers(kind).joinToString(",")
+                        queueInfo = store.queueSummary(kind)
                         bleDevices.clear()
                         meshStatus = if (kind == "ble") "Transport BLE" else "Transport TCP"
                     },
                     peer = meshPeer, onPeer = { meshPeer = it },
                     status = meshStatus,
+                    queueInfo = queueInfo,
+                    onStop = { mesh.stopListening() },
+                    onRetry = {
+                        runCatching { mesh.retryWithCurrentPeers() }
+                            .onFailure { meshStatus = it.message ?: "Błąd ponowienia" }
+                    },
                     devices = bleDevices,
                     onScan = {
                         requireBle {
@@ -259,11 +278,12 @@ private fun App() {
                         item,
                         onSend = {
                             val send = {
-                                runCatching { mesh.publish(Codec.pack(item.report), onStatus) }
+                                runCatching { mesh.publish(Codec.pack(item.report), reportId = item.id) }
                                     .onFailure { meshStatus = it.message ?: "Błąd wysyłki" }
                                 Unit
                             }
-                            if (transportKind == "ble") requireBle(send) else send()
+                            send()
+                            if (transportKind == "ble") requireBle { }
                         },
                         onShare = {
                             val packet = String(Codec.pack(item.report), Charsets.US_ASCII)
@@ -283,11 +303,11 @@ private fun App() {
             AlertDialog(
                 onDismissRequest = { confirmDelete = null },
                 title = { Text("Usunąć raport?") },
-                text = { Text("Lokalny zapis zostanie trwale usunięty z tego urządzenia.") },
+                text = { Text("Usuń z aktywnej historii i anuluj powiązane oczekujące wysyłki. Już dostarczonych kopii nie cofniesz. Stara kopia migracyjna JSON pozostaje nietknięta.") },
                 confirmButton = {
                     TextButton(onClick = {
                         store.delete(item.id)
-                        reports.removeAll { it.id == item.id }
+                        refresh()
                         confirmDelete = null
                     }) { Text("Usuń") }
                 },
@@ -385,6 +405,7 @@ private fun MeshCard(
     peer: String, onPeer: (String) -> Unit, status: String,
     devices: List<String>, onScan: () -> Unit, onPick: (String) -> Unit,
     onApply: () -> Unit, onListen: () -> Unit,
+    queueInfo: String, onStop: () -> Unit, onRetry: () -> Unit,
 ) {
     val ble = transportKind == "ble"
     Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = Panel)) {
@@ -434,6 +455,15 @@ private fun MeshCard(
             }
             Button(onClick = onListen, modifier = Modifier.fillMaxWidth().cd("mesh-listen")) {
                 Text(if (ble) "Nasłuchuj BLE" else "Nasłuchuj :8765")
+            }
+            TextButton(onClick = onStop, modifier = Modifier.fillMaxWidth().cd("mesh-stop")) {
+                Text("Zatrzymaj odbiór")
+            }
+            Text(queueInfo, fontSize = 12.sp, modifier = Modifier.cd("queue-status"))
+            Text("Ponowienia działają przy uruchomionej aplikacji. Zmiana adresu BLE? Zastosuj nowego sąsiada i jawnie ponów.",
+                fontSize = 12.sp, color = Dim)
+            Button(onClick = onRetry, modifier = Modifier.fillMaxWidth().cd("queue-retry")) {
+                Text("Ponów do obecnych sąsiadów")
             }
             Text(status, fontSize = 12.sp, color = Amber, modifier = Modifier.cd("mesh-status"))
         }
