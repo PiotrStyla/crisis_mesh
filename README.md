@@ -137,7 +137,9 @@ na dysku ani dostarczenia przez kolejne węzły. UI mówi to wprost.
   szyfrowania, uwierzytelniania i usługi działającej niezawodnie w tle.
 - Nasłuch jest na wszystkich interfejsach. Kto ma dostęp do portu, może podawać
   fałszywe raporty, zapełniać historię albo blokować odbiór. Tylko zaufana sieć testowa.
-- Nie wykonano testów fizycznego radia, zasięgu, baterii ani działania bez infrastruktury.
+- Nie wykonano testów BLE, WiFi Aware, zasięgu, baterii ani pracy bez żadnej
+  infrastruktury. Testy fizyczne dotąd tylko w obrębie jednej sieci IP (Wi-Fi
+  lub hotspot telefonu) — patrz sekcja z dowodami poniżej.
 
 ### Dowody multi-hop
 
@@ -170,6 +172,60 @@ adb -s emulator-5556 forward tcp:9002 tcp:8765 # host -> telefon
 
 `10.0.2.2` jest aliasem hosta w emulatorze, nie adresem do użycia w terenie.
 Wspólna sieć fizyczna wymaga osiągalnych adresów urządzeń i dostępnego portu.
+
+### Weryfikacja na fizycznych urządzeniach (2026-10-19)
+
+Te same dwa APK co w testach emulatorowych, na sprzęcie:
+
+| Rola | Urządzenie | System | Adres w LAN |
+|---|---|---|---|
+| Telefon | Samsung Galaxy A22 5G (`SM-A226B`) | Android | `192.168.0.125` |
+| Zegarek | Samsung Galaxy Watch 4 (`SM-R865F`), ekran 396×396 | Wear OS 14 | `192.168.0.156` |
+| Komputer | Windows (sterowanie i odczyt stanu) | — | `192.168.0.179` |
+
+**Telefon — trzy łączniki, ten sam protokół.** W każdym przypadku sprawdzono
+obie strony, blokowanie duplikatu tego samego UUID oraz zgodność czterech pól
+z `Codec.unpack`:
+
+| Łącznik | Komputer → telefon | Telefon → komputer | Dowód |
+|---|---|---|---|
+| USB (`adb forward` / `adb reverse`) | historia 0→1 | przechwycona ramka zgodna | trwałość po `force-stop` + ponownym uruchomieniu |
+| Wi-Fi LAN (router) | historia 1→2 | źródło `192.168.0.118` → PC | bez tuneli ADB w ścieżce danych |
+| Hotspot telefonu (bez domowego routera) | historia 2→3 | źródło `10.175.88.226` → PC | SSID `SmartSwitch-133`, PC dostał `10.175.88.36` |
+
+**Zegarek i mesh telefon ↔ zegarek** (oba urządzenia w jednej sieci Wi-Fi,
+dane szły wyłącznie po IP — ADB służyło tylko do sterowania ekranem i odczytu
+`files/reports.json`):
+
+| Scenariusz | Zaobserwowany wynik |
+|---|---|
+| Instalacja APK na zegarku przez Wi-Fi (`adb pair` + `adb connect`) | `Success`, aplikacja uruchomiona na `SM-R865F` |
+| Komputer → zegarek, `CM1\|5\|1\|unknown\|water` | historia zegarka 0→1, cztery pola zgodne, źródło `mesh` |
+| Ponowne przesłanie tego samego UUID na zegarek | historia bez zmian |
+| **Zegarek → telefon**, przyciskiem „Wyślij” | historia telefonu 4→5 |
+| **Telefon → zegarek**, przyciskiem „Wyślij” | historia zegarka 1→2 |
+
+W obu kierunkach telefon ↔ zegarek zapisany wpis to `CM1|5|1|unknown|water`
+(5 osób, 1 dziecko, zagrożenie nieustalone, potrzeba woda), źródło `mesh`.
+
+Zrzuty ekranu potwierdzające odbiór:
+[`evidence/phone-received-from-watch.png`](evidence/phone-received-from-watch.png),
+[`evidence/watch-received-from-phone.png`](evidence/watch-received-from-phone.png).
+
+**Problemy napotkane przy teście — istotne dla wdrożenia:**
+
+1. **Zapora Windows przy sieci sklasyfikowanej jako „Public”** domyślnie blokuje
+   ruch przychodzący. Zegarek nie mógł połączyć się z nasłuchem na komputerze
+   (`failed to connect`), choć nasłuch działał i przyjmował połączenia lokalne.
+   Odbiorcą uczyniliśmy telefon, który zapory nie ma. W terenie każdy węzeł musi
+   sam akceptować połączenia przychodzące — to wymaga świadomej konfiguracji zapory.
+2. **Wear OS usypia Wi-Fi i debugowanie bezprzewodowe** po wygaśnięciu ekranu.
+   `adb pair` i `adb connect` przerywały się w środku testu, a port i kod
+   parowania zmieniają się przy każdym otwarciu ekranu. Pomogło trzymanie
+   zegarka na ładowarce i podniesienie `screen_off_timeout` (przywrócone po teście).
+3. **Zegarek miał niepoprawny zegar systemowy** (wskazywał marzec 2025), stąd
+   starsze znaczniki czasu w jego historii. Aplikacja zapisuje czas urządzenia,
+   więc brak synchronizacji zegara zniekształca kolejność wpisów.
 
 ### Budowa
 
