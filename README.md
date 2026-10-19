@@ -2,6 +2,9 @@
 
 Eksperymentalna aplikacja Android/Wear OS do krótkich raportów kryzysowych: formularz → pakiet CM1 → przekazywanie między sąsiadami TCP lub BLE → deterministyczny opis. Repo zawiera też adapter lokalnego GoLLeM i benchmark ekstrakcji. **BLE działa telefon ↔ zegarek na fizycznym sprzęcie; trzywęzłowe przekazywanie sprawdzono dotąd na TCP, nie na radiu BLE.** To nie jest niezawodny system ratunkowy. Nie wysyła SOS do służb.
 
+**[Tablica architektury](ARCHITECTURE.md)** — przepływ raportu, transport TCP/BLE,
+moduły aplikacji oraz planowana rola lokalnego GoLLeM. Diagram renderuje się w GitHubie.
+
 ## Wynik eksperymentu
 
 Uruchomiono rzeczywisty **GoLLeM v6 250M Instruct v3**, plik `gollem-v6-250m-instruct-v3-Q4_K_M-q8out.gguf` wskazany w konfiguracji istniejącego projektu zegarkowego `GoLLem_on_watch`. Nazwy organizacji i licencji tego konkretnego modelu nie wywodzimy z nazwy innych modeli SlayerLab. Wagi nie są dołączone.
