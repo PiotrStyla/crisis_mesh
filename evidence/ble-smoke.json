@@ -1,0 +1,50 @@
+{
+  "date": "2026-10-19",
+  "apk_sha256": "9c4ffeb6b45438d7671f64cb428701ad6396b2fa82bcf4faaf41820aaba5c593",
+  "devices": {
+    "phone": "Samsung Galaxy A22 5G (SM-A226B)",
+    "watch": "Samsung Galaxy Watch 4 (SM-R865F), Android 14, 396x396"
+  },
+  "transport": "BLE GATT, acknowledged writes, 20-byte fragments",
+  "service_uuid": "d9e0b811-484c-4a01-9ada-b8700e4182a1",
+  "characteristic_uuid": "d9e0b812-484c-4a01-9ada-b8700e4182a1",
+  "packet": "CM1|5|1|unknown|water",
+  "envelope_bytes": 42,
+  "length_prefixed_frame_bytes": 46,
+  "att_write_sizes": [20, 20, 6],
+  "att_write_sizes_basis": "Implementation splits the 46-byte frame; not a radio sniffer capture",
+  "control_connections": {"phone": "ADB USB", "watch": "ADB Wi-Fi"},
+  "phone_wifi_during_final_smoke": "Wifi is disabled; wlan0 state DOWN",
+  "cellular_data_disabled": false,
+  "checks": [
+    {
+      "direction": "phone_to_watch",
+      "history_before": {"phone": 7, "watch": 4},
+      "history_after": {"phone": 7, "watch": 5},
+      "receiver_fields": {"people": 5, "children": 1, "hazard": "unknown", "need": "water"},
+      "receiver_source": "mesh"
+    },
+    {
+      "direction": "watch_to_phone",
+      "history_before": {"phone": 7, "watch": 5},
+      "history_after": {"phone": 8, "watch": 5},
+      "receiver_fields": {"people": 5, "children": 1, "hazard": "unknown", "need": "water"},
+      "receiver_source": "mesh"
+    },
+    {
+      "scenario": "force_stop_and_relaunch",
+      "history_after": {"phone": 8, "watch": 5}
+    }
+  ],
+  "verification_source": "Actual app UI actions, ATT receipt status, and adb run-as reads of files/reports.json; no report injection into storage",
+  "jvm_tests": {"passed": 22, "failed": 0, "skipped": 0},
+  "cleanup": "Original display/stay-awake settings restored, phone Wi-Fi re-enabled, both apps restarted to stop BLE advertising and scanning",
+  "limits": [
+    "No third BLE node: multi-hop radio path not verified",
+    "ATT receipt does not confirm durable storage; receiver history was checked separately",
+    "No background, battery, range, interference or adversarial testing",
+    "No authentication or encryption; scan service is not identity verification",
+    "Deduplication is process-memory only and intentional resend creates a new UUID",
+    "Watch clock was wrong; test date is host date, not watch report timestamp"
+  ]
+}

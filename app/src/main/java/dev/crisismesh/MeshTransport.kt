@@ -1,9 +1,12 @@
 // MeshTransport.kt - seam between CM1 payloads and the byte-moving link.
-// UI and codec only see send/listen/close; the TCP implementation is the
-// first adapter (LAN / emulator loopback). A BLE or WiFi Aware implementation
-// can replace it without touching codec.py semantics or the screens.
+// UI and codec only see send/listen/close. Two adapters implement it:
+// TcpMeshTransport (LAN / emulator loopback) and BleMeshTransport (radio).
+// Neither touches codec.py semantics or the screens.
 
 package dev.crisismesh
+
+/** A BLE peer address: six hex octets separated by colons. */
+internal val MAC_ADDRESS = Regex("^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
 
 interface MeshTransport {
     /**

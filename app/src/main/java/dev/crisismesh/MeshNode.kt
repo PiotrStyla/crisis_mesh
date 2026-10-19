@@ -38,12 +38,18 @@ class MeshNode(private val transport: MeshTransport = TcpMeshTransport()) {
     fun configurePeers(text: String) {
         val next = text.split(',', '\n').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
         require(next.size <= 8) { "Maksymalnie 8 sąsiadów" }
-        require(next.all { address ->
-            val cut = address.lastIndexOf(':')
-            cut > 0 && address.substring(0, cut).none { it.isWhitespace() } &&
-                address.substring(cut + 1).toIntOrNull() in 1..65535
-        }) { "Podaj sąsiadów jako host:port, oddzielonych przecinkiem" }
+        require(next.all { it.isPeerAddress() }) {
+            "Podaj sąsiadów jako host:port albo MAC BLE, oddzielone przecinkiem"
+        }
         peers = next
+    }
+
+    /** A peer is either a TCP endpoint or a BLE MAC; the transport decides which. */
+    private fun String.isPeerAddress(): Boolean {
+        if (MAC_ADDRESS.matches(this)) return true
+        val cut = lastIndexOf(':')
+        return cut > 0 && substring(0, cut).none { it.isWhitespace() } &&
+            substring(cut + 1).toIntOrNull() in 1..65535
     }
 
     fun listen(port: Int, onPacket: (ByteArray) -> Unit, onStatus: (String) -> Unit) {

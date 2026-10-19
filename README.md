@@ -1,6 +1,6 @@
 # Crisis Mesh / Radio Officer
 
-Eksperymentalna aplikacja Android/Wear OS do krótkich raportów kryzysowych: formularz → pakiet CM1 → przekazywanie między ręcznie skonfigurowanymi sąsiadami TCP → deterministyczny opis. Repo zawiera też adapter lokalnego GoLLeM i benchmark ekstrakcji. **Multi-hop działa na TCP; BLE, odkrywanie urządzeń i radio mesh nie są zaimplementowane.** To nie jest niezawodny system ratunkowy. Nie wysyła SOS do służb.
+Eksperymentalna aplikacja Android/Wear OS do krótkich raportów kryzysowych: formularz → pakiet CM1 → przekazywanie między sąsiadami TCP lub BLE → deterministyczny opis. Repo zawiera też adapter lokalnego GoLLeM i benchmark ekstrakcji. **BLE działa telefon ↔ zegarek na fizycznym sprzęcie; trzywęzłowe przekazywanie sprawdzono dotąd na TCP, nie na radiu BLE.** To nie jest niezawodny system ratunkowy. Nie wysyła SOS do służb.
 
 ## Wynik eksperymentu
 
@@ -62,10 +62,13 @@ Build nie usuwa katalogów; można wskazać istniejący build. Podczas weryfikac
 ## Aplikacja Android / Wear OS (`app/`)
 
 Moduł Kotlin + Compose, minSdk 26, target 35. Formularz, lokalna historia,
-import/eksport CM1 i przekazywanie przez TCP. Jedynym uprawnieniem jest
-`INTERNET`: **nie ogranicza ono połączeń do LAN**. Adresy sąsiadów wpisuje
-użytkownik; mogą wskazywać także publiczny host. Brak wbudowanego endpointu
-chmurowego, lokalizacji i obsługi Bluetooth.
+import/eksport CM1 i przekazywanie przez TCP lub BLE. `INTERNET` obsługuje TCP
+i **nie ogranicza połączeń do LAN** — adres wpisany przez użytkownika może
+wskazywać publiczny host. Brak wbudowanego endpointu chmurowego.
+BLE prosi o uprawnienia dopiero przy skanowaniu, nasłuchu lub wysyłce:
+„Urządzenia w pobliżu” na Androidzie 12+ (`SCAN`, `CONNECT`, `ADVERTISE`),
+a na Androidzie 8–11 o lokalizację potrzebną systemowi do skanowania BLE.
+Aplikacja nie pobiera pozycji GPS; na Androidzie 12+ skan ma `neverForLocation`.
 
 Historia jest zapisywana w prywatnym `filesDir/reports.json`; przychodzące
 poprawne raporty zapisują się automatycznie ze źródłem `mesh`. Ta etykieta
@@ -133,18 +136,20 @@ na dysku ani dostarczenia przez kolejne węzły. UI mówi to wprost.
   historię. Restart/odtworzenie ekranu lub wyparcie UUID pozwala na ponowny odbiór.
 - Ponowne naciśnięcie „Wyślij” tworzy nową wiadomość, nawet dla identycznej treści.
 - Lista sąsiadów i nasłuch wymagają ponownego ustawienia po odtworzeniu aplikacji.
-- Brak discovery, kolejki offline, automatycznego ponawiania, gwarancji dostarczenia,
+- TCP nie ma discovery. BLE wykrywa wyłącznie reklamujące usługę Crisis Mesh
+  urządzenia; wybór i zastosowanie sąsiadów pozostają ręczne.
+- Brak kolejki offline, automatycznego ponawiania, gwarancji dostarczenia,
   szyfrowania, uwierzytelniania i usługi działającej niezawodnie w tle.
-- Nasłuch jest na wszystkich interfejsach. Kto ma dostęp do portu, może podawać
-  fałszywe raporty, zapełniać historię albo blokować odbiór. Tylko zaufana sieć testowa.
-- Nie wykonano testów BLE, WiFi Aware, zasięgu, baterii ani pracy bez żadnej
-  infrastruktury. Testy fizyczne dotąd tylko w obrębie jednej sieci IP (Wi-Fi
-  lub hotspot telefonu) — patrz sekcja z dowodami poniżej.
+- Nasłuch TCP jest na wszystkich interfejsach, a BLE przyjmuje nieuwierzytelnione
+  zapisy GATT. Dostęp do łącza pozwala podawać fałszywe raporty, zapełniać
+  historię lub blokować odbiór. Tylko zaufane urządzenia i środowisko testowe.
+- BLE sprawdzono na dwóch urządzeniach. Nie sprawdzono trzech węzłów BLE,
+  zasięgu, zużycia baterii, odporności na zakłócenia ani WiFi Aware.
 
 ### Dowody multi-hop
 
-`testDebugUnitTest`: 17 testów bez błędów (7 `AppCodecTest`, 4
-`TcpMeshTransportTest`, 6 `MeshNodeTest`). Testy routingu używają rzeczywistych
+`testDebugUnitTest`: 22 testy bez błędów (7 `AppCodecTest`, 4
+`TcpMeshTransportTest`, 6 `MeshNodeTest`, 5 `MeshFramesTest`). Testy routingu używają rzeczywistych
 gniazd loopback: łańcuch bez bezpośredniego A–C, cykl, limit jednego przeskoku,
 tożsamość UUID niezależna od treści, błędny payload bez zatrucia UUID,
 nieznana wersja i niepoprawny budżet.
@@ -180,7 +185,7 @@ Te same dwa APK co w testach emulatorowych, na sprzęcie:
 | Rola | Urządzenie | System | Adres w LAN |
 |---|---|---|---|
 | Telefon | Samsung Galaxy A22 5G (`SM-A226B`) | Android | `192.168.0.125` |
-| Zegarek | Samsung Galaxy Watch 4 (`SM-R865F`), ekran 396×396 | Wear OS 14 | `192.168.0.156` |
+| Zegarek | Samsung Galaxy Watch 4 (`SM-R865F`), ekran 396×396 | Android 14; numer Wear OS nieodczytany | `192.168.0.156` |
 | Komputer | Windows (sterowanie i odczyt stanu) | — | `192.168.0.179` |
 
 **Telefon — trzy łączniki, ten sam protokół.** W każdym przypadku sprawdzono
@@ -214,18 +219,69 @@ Zrzuty ekranu potwierdzające odbiór:
 
 **Problemy napotkane przy teście — istotne dla wdrożenia:**
 
-1. **Zapora Windows przy sieci sklasyfikowanej jako „Public”** domyślnie blokuje
-   ruch przychodzący. Zegarek nie mógł połączyć się z nasłuchem na komputerze
-   (`failed to connect`), choć nasłuch działał i przyjmował połączenia lokalne.
-   Odbiorcą uczyniliśmy telefon, który zapory nie ma. W terenie każdy węzeł musi
-   sam akceptować połączenia przychodzące — to wymaga świadomej konfiguracji zapory.
-2. **Wear OS usypia Wi-Fi i debugowanie bezprzewodowe** po wygaśnięciu ekranu.
-   `adb pair` i `adb connect` przerywały się w środku testu, a port i kod
-   parowania zmieniają się przy każdym otwarciu ekranu. Pomogło trzymanie
-   zegarka na ładowarce i podniesienie `screen_off_timeout` (przywrócone po teście).
-3. **Zegarek miał niepoprawny zegar systemowy** (wskazywał marzec 2025), stąd
-   starsze znaczniki czasu w jego historii. Aplikacja zapisuje czas urządzenia,
-   więc brak synchronizacji zegara zniekształca kolejność wpisów.
+1. Zegarek nie mógł połączyć się z nasłuchem na komputerze (`failed to connect`),
+   choć lokalne połączenie na komputerze działało. Windows raportował profil
+   sieci „Public” i włączoną zaporę. **Zapora była hipotezą**, nie potwierdzoną
+   przyczyną — nie wykonano porównania z regułą zezwalającą. Próba z telefonem
+   jako odbiorcą przeszła; nie dowodzi to, że telefon nie ma filtrowania sieci.
+2. W trakcie automatyzacji zegarek wracał do tarczy, a połączenia ADB zrywały
+   się. Tymczasowe wydłużenie czasu ekranu i pozostawienie go na ładowarce
+   pozwoliło zakończyć próbę. **Nie ustalono, że każde wygaszenie wyłącza Wi-Fi
+   lub unieważnia kod parowania.** Ustawienia ekranu przywrócono po teście.
+3. Zegarek wskazywał marzec 2025. Aplikacja używa czasu urządzenia do opisu
+   wpisów, więc brak synchronizacji daje nieprawidłowe daty; historia wyświetla
+   wpisy w kolejności dodania, nie sortuje po tych datach.
+
+### BLE GATT — obsługa i dowody
+
+Na obu urządzeniach wybierz **BLE** w karcie sieci. Przy pierwszym użyciu
+zaakceptuj systemowy dostęp do urządzeń w pobliżu.
+
+1. Na odbiorcy naciśnij **Nasłuchuj BLE**. Poczekaj na status reklamowania.
+2. Na nadawcy naciśnij **Skanuj urządzenia** (skan trwa 10 sekund).
+3. Wybierz wykryte urządzenie i naciśnij **Zastosuj sąsiadów**.
+4. Przy raporcie w historii naciśnij **Wyślij**.
+5. Dla komunikacji w obie strony powtórz konfigurację w odwrotnym kierunku.
+
+Przełączenie TCP/BLE zamyka poprzedni transport i czyści pole sąsiadów.
+Po odtworzeniu aplikacji trzeba ponownie wybrać transport i uruchomić nasłuch.
+Adresy MAC w reklamach BLE mogą się zmieniać — po restarcie reklamowania
+zeskanuj sąsiadów ponownie. Wykrycie usługi nie potwierdza tożsamości urządzenia.
+
+`BleMeshTransport` przenosi tę samą kopertę CMF1 i 4-bajtową długość co TCP.
+Serwer GATT reklamuje usługę `d9e0b811-484c-4a01-9ada-b8700e4182a1`;
+charakterystyka zapisu to `d9e0b812-484c-4a01-9ada-b8700e4182a1`.
+Nadawca wysyła kolejne fragmenty do 20 B, mieszczące się w obowiązkowym MTU 23,
+czekając na odpowiedź ATT po każdym fragmencie. Brak negocjacji MTU.
+Ostatnia odpowiedź potwierdza pełną ramkę, **nie zapis ani dostarczenie dalej**.
+Ramki mają limit 1024 B; bufor odbiorcy jest ograniczony, zapisy prepare-write
+i niezerowe offsety są odrzucane. Przekazywanie i deduplikacja pozostają w `MeshNode`.
+
+**Końcowy smoke na Galaxy A22 5G i Galaxy Watch 4 (2026-10-19):**
+
+| Scenariusz | Telefon | Zegarek |
+|---|---|---|
+| Telefon → zegarek, przy wyłączonym Wi-Fi telefonu | historia 7→7 | historia 4→5 |
+| Zegarek → telefon, nadal bez Wi-Fi telefonu | historia 7→8 | historia 5→5 |
+| Force-stop i ponowne uruchomienie po zapisach | 8 wpisów zachowanych | 5 wpisów zachowanych |
+
+Obie strony miały skonfigurowanego sąsiada, więc powrót przez pętlę nie dopisał
+nadawcy własnej wiadomości. Każdy świadomy przycisk „Wyślij” tworzył nowy UUID.
+Odczytano rzeczywiste `files/reports.json`: w obu nowych wpisach źródło `mesh`
+i pola `5 / 1 / unknown / water`. Nie wnioskowano o zapisie z samego ACK.
+
+Telefon był sterowany przez USB, zegarek przez ADB po Wi-Fi. Wi-Fi telefonu
+było wyłączone, jego `wlan0` raportował `state DOWN`; danych komórkowych nie
+wyłączano. Raporty szły przez GATT, bez tunelu ADB i bez TCP. To potwierdza
+niezależność tej wymiany od Wi-Fi/IP, nie pracę urządzeń w trybie samolotowym
+ani ciągłą pracę w tle. Po próbie przywrócono Wi-Fi telefonu i ustawienia
+ekranu, a nasłuchy BLE zamknięto przez ponowne uruchomienie aplikacji.
+
+Dowody: [telefon](evidence/ble-phone.png),
+[status zegarka](evidence/ble-watch.png),
+[pakiet na zegarku](evidence/ble-watch-report.png),
+[wyniki i SHA-256 APK](evidence/ble-smoke.json).
+
 
 ### Budowa
 
@@ -236,6 +292,8 @@ Wymagania: JDK 17, Android SDK (platforma 35, build-tools), Gradle 8.10.2
 ```powershell
 $env:JAVA_HOME = "$env:LOCALAPPDATA\Programs\Eclipse Adoptium\jdk-17.0.20.1+1"
 $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+# Jeśli PATH zawiera osadzone cudzysłowy, usuń je tylko w tej sesji:
+# $env:PATH = $env:PATH.Replace('"', '')
 .\gradlew.bat testDebugUnitTest assembleDebug
 & "$env:ANDROID_HOME\platform-tools\adb.exe" -s <serial> install -r app\build\outputs\apk\debug\app-debug.apk
 ```
@@ -261,6 +319,6 @@ To **payload aplikacji**, nie pełny pakiet radiowy. Nie zawiera nagłówków tr
 
 ## Co wynika z tego dla projektu
 
-Kompaktowy formularz i deterministyczny kodek są wykonalne. Warstwa modelowa wymaga dalszej pracy i oddzielnej walidacji: np. dostrojenia GoLLeM do ekstrakcji na osobnym zbiorze, z testami na danych niewidzianych. Sama gramatyka JSON może wymusić składnię, ale nie gwarantuje zgodnych faktów. Tego treningu ani testów radiowych nie wykonano w tym eksperymencie.
+Kompaktowy formularz i deterministyczny kodek działają. Warstwa modelowa wymaga dalszej pracy i oddzielnej walidacji: np. dostrojenia GoLLeM do ekstrakcji na osobnym zbiorze, z testami na danych niewidzianych. Sama gramatyka JSON może wymusić składnię, ale nie gwarantuje zgodnych faktów. Model nie jest dołączony ani uruchamiany w aplikacji Android.
 
-Nie ma automatycznej diagnozy, triażu medycznego, wnioskowania o utracie przytomności ani samoczynnego alarmu z tętna. Oryginalne zgłoszenie trzeba zachować poza skrótem czterech pól. Watch-first i transport BLE/LoRa pozostają kierunkiem produktu, nie deklarowaną funkcją tego repo.
+Nie ma automatycznej diagnozy, triażu medycznego, wnioskowania o utracie przytomności ani samoczynnego alarmu z tętna. Oryginalne zgłoszenie trzeba zachować poza skrótem czterech pól. BLE telefon ↔ zegarek jest sprawdzone, ale radiowy multi-hop na trzech urządzeniach, praca w tle i LoRa nie są zweryfikowanymi funkcjami.

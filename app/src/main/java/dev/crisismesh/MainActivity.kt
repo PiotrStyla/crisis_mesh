@@ -1,9 +1,16 @@
-// Local report form with explicitly configured TCP forwarding peers.
+// Local report form with explicitly configured forwarding peers over TCP or BLE.
 
 package dev.crisismesh
 
+import android.Manifest
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -68,7 +75,32 @@ private fun App() {
     var confirmDelete by remember { mutableStateOf<StoredReport?>(null) }
     var meshPeer by remember { mutableStateOf("") }
     var meshStatus by remember { mutableStateOf("Nasłuch: wyłączony") }
-    val mesh = remember { MeshNode() }
+    var transportKind by remember { mutableStateOf("tcp") }
+    val bleDevices = remember { mutableStateListOf<String>() }
+    val transport = remember(transportKind) {
+        if (transportKind == "ble") BleMeshTransport(context) else TcpMeshTransport()
+    }
+    val mesh = remember(transport) { MeshNode(transport) }
+    // Bluetooth permissions are requested only when BLE is actually used.
+    var pendingBleAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) {
+        val action = pendingBleAction
+        pendingBleAction = null
+        if (blePermissions().all {
+                ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+            } && action != null) action() else meshStatus = "Brak uprawnień Bluetooth"
+    }
+    val requireBle: ((() -> Unit)) -> Unit = { action ->
+        val needed = blePermissions()
+        if (needed.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }) {
+            action()
+        } else {
+            pendingBleAction = action
+            permissionLauncher.launch(needed)
+        }
+    }
     val refresh = { reports.clear(); reports.addAll(store.load()) }
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
     // Worker-thread callbacks marshalled to the UI thread for every status.
@@ -85,7 +117,10 @@ private fun App() {
             }
         }
     }
-    DisposableEffect(Unit) { onDispose { mesh.close() } }
+    DisposableEffect(transport) {
+        val node = mesh
+        onDispose { node.close() }
+    }
 
     MaterialTheme(colorScheme = darkColorScheme(
         primary = Amber, onPrimary = Ink, background = Ink, surface = Panel,
@@ -163,14 +198,51 @@ private fun App() {
                 )
 
                 MeshCard(
+                    transportKind = transportKind,
+                    onTransport = { kind ->
+                        pendingBleAction = null
+                        transportKind = kind
+                        meshPeer = ""
+                        bleDevices.clear()
+                        meshStatus = if (kind == "ble") "Transport BLE" else "Transport TCP"
+                    },
                     peer = meshPeer, onPeer = { meshPeer = it },
                     status = meshStatus,
+                    devices = bleDevices,
+                    onScan = {
+                        requireBle {
+                            bleDevices.clear()
+                            (transport as? BleMeshTransport)?.startScan(
+                                { entry ->
+                                    val mac = entry.substringAfterLast('|')
+                                    mainHandler.post {
+                                        if (bleDevices.size < 8 && bleDevices.none { it.substringAfterLast('|') == mac }) {
+                                            bleDevices.add(entry)
+                                        }
+                                    }
+                                },
+                                { s -> mainHandler.post { meshStatus = s } },
+                            )
+                        }
+                    },
+                    onPick = { entry ->
+                        val mac = entry.substringAfterLast('|')
+                        val existing = meshPeer.split(',').map { it.trim() }
+                        meshPeer = when {
+                            meshPeer.isBlank() -> mac
+                            existing.contains(mac) -> meshPeer
+                            else -> meshPeer.trimEnd() + "," + mac
+                        }
+                    },
                     onApply = {
                         runCatching { mesh.configurePeers(meshPeer) }
                             .onSuccess { meshStatus = "Zastosowano sąsiadów" }
                             .onFailure { meshStatus = it.message ?: "Niepoprawne adresy" }
                     },
-                    onListen = { mesh.listen(8765, onPacket, onStatus) },
+                    onListen = {
+                        val start = { mesh.listen(8765, onPacket, onStatus) }
+                        if (transportKind == "ble") requireBle(start) else start()
+                    },
                 )
 
                 Text("Historia (${reports.size})",
@@ -186,8 +258,12 @@ private fun App() {
                     HistoryRow(
                         item,
                         onSend = {
-                            runCatching { mesh.publish(Codec.pack(item.report), onStatus) }
-                                .onFailure { meshStatus = it.message ?: "Błąd wysyłki" }
+                            val send = {
+                                runCatching { mesh.publish(Codec.pack(item.report), onStatus) }
+                                    .onFailure { meshStatus = it.message ?: "Błąd wysyłki" }
+                                Unit
+                            }
+                            if (transportKind == "ble") requireBle(send) else send()
                         },
                         onShare = {
                             val packet = String(Codec.pack(item.report), Charsets.US_ASCII)
@@ -231,7 +307,7 @@ private fun Header() = Column(
 ) {
     Text("Crisis Mesh", fontSize = 22.sp, letterSpacing = 1.sp, textAlign = TextAlign.Center)
     Text(
-        "Bez serwera centralnego · TCP",
+        "Bez serwera centralnego · TCP / BLE",
         fontSize = 12.sp, color = Dim, textAlign = TextAlign.Center,
         modifier = Modifier.cd("status"),
     )
@@ -305,30 +381,76 @@ private fun ChoiceRow(label: String, options: Map<String, String>, selected: Str
 
 @Composable
 private fun MeshCard(
+    transportKind: String, onTransport: (String) -> Unit,
     peer: String, onPeer: (String) -> Unit, status: String,
+    devices: List<String>, onScan: () -> Unit, onPick: (String) -> Unit,
     onApply: () -> Unit, onListen: () -> Unit,
 ) {
+    val ble = transportKind == "ble"
     Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = Panel)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Mesh TCP · do 4 przeskoków", fontSize = 14.sp, color = Dim)
-            Text("Tylko zaufana sieć testowa. Bez szyfrowania i gwarancji dostarczenia.", fontSize = 12.sp, color = Dim)
+            Text("Mesh · do 4 przeskoków", fontSize = 14.sp, color = Dim)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(
+                    selected = !ble, onClick = { onTransport("tcp") },
+                    label = { Text("TCP", fontSize = 12.sp) }, modifier = Modifier.cd("transport-tcp"),
+                )
+                FilterChip(
+                    selected = ble, onClick = { onTransport("ble") },
+                    label = { Text("BLE", fontSize = 12.sp) }, modifier = Modifier.cd("transport-ble"),
+                )
+            }
+            Text(
+                if (ble) "BLE: włącz nasłuch odbiorcy, skanuj, wybierz i zastosuj sąsiada. Bez szyfrowania i gwarancji dostarczenia."
+                else "Tylko zaufana sieć testowa. Bez szyfrowania i gwarancji dostarczenia.",
+                fontSize = 12.sp, color = Dim,
+            )
             OutlinedTextField(
                 peer, onPeer, maxLines = 4,
-                label = { Text("Sąsiedzi host:port, po przecinku") },
+                label = {
+                    Text(if (ble) "Sąsiedzi BLE AA:BB:CC:DD:EE:FF, po przecinku"
+                         else "Sąsiedzi host:port, po przecinku")
+                },
                 modifier = Modifier.fillMaxWidth().cd("mesh-peer"),
                 textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 13.sp),
             )
+            if (ble) {
+                Button(onClick = onScan, modifier = Modifier.fillMaxWidth().cd("mesh-scan")) {
+                    Text("Skanuj urządzenia")
+                }
+                devices.forEach { entry ->
+                    val name = entry.substringBefore('|')
+                    val mac = entry.substringAfterLast('|')
+                    TextButton(onClick = { onPick(entry) }, modifier = Modifier.fillMaxWidth().cd("device-$mac")) {
+                        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.Start) {
+                            Text(name, fontSize = 13.sp, color = Color.White)
+                            Text(mac, fontSize = 12.sp, color = Dim, fontFamily = FontFamily.Monospace)
+                        }
+                    }
+                }
+            }
             Button(onClick = onApply, modifier = Modifier.fillMaxWidth().cd("mesh-apply")) {
                 Text("Zastosuj sąsiadów")
             }
-            Button(
-                onClick = onListen,
-                modifier = Modifier.fillMaxWidth().cd("mesh-listen"),
-            ) { Text("Nasłuchuj :8765") }
+            Button(onClick = onListen, modifier = Modifier.fillMaxWidth().cd("mesh-listen")) {
+                Text(if (ble) "Nasłuchuj BLE" else "Nasłuchuj :8765")
+            }
             Text(status, fontSize = 12.sp, color = Amber, modifier = Modifier.cd("mesh-status"))
         }
     }
 }
+
+/** Runtime permissions required by the BLE path; the TCP path needs none of these. */
+private fun blePermissions(): Array<String> =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        arrayOf(
+            Manifest.permission.BLUETOOTH_SCAN,
+            Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.BLUETOOTH_ADVERTISE,
+        )
+    } else {
+        arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+    }
 
 @Composable
 private fun ImportCard(
