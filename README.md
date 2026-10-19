@@ -74,7 +74,7 @@ a na Androidzie 8–11 o lokalizację potrzebną systemowi do skanowania BLE.
 Aplikacja nie pobiera pozycji GPS; na Androidzie 12+ skan ma `neverForLocation`.
 
 Historia, UUID i kolejka dostarczania są zapisane transakcyjnie w prywatnym
-`databases/crisis.db`. Pierwsze uruchomienie wersji **1.1 / CMF2** importuje
+`databases/crisis.db`. Pierwsze uruchomienie wersji **1.1 lub nowszej / CMF2** importuje
 `files/reports.json` dokładnie raz, zachowując identyfikatory, daty, pola i notatki.
 Plik JSON pozostaje nietkniętą kopią migracyjną — nie jest już aktywną historią.
 Błąd migracji wycofuje import i jest pokazany w UI; nie usuwa starego pliku.
@@ -113,7 +113,7 @@ wpisu, także po restarcie i po usunięciu raportu z aktywnej historii.
 Ten sam UUID z inną treścią jest odrzucany. Domyślny limit to 4 połączenia od
 źródła (1–8); przy `hopsLeft = 0` odbiorca zapisuje, ale nie przekazuje dalej.
 
-**Protokół CMF2 wymaga wersji 1.1 na obu urządzeniach. Nie współpracuje z CMF1.**
+**Protokół CMF2 wymaga co najmniej wersji 1.1 na obu urządzeniach. Nie współpracuje z CMF1.**
 
 | Element | Kodowanie |
 |---|---|
@@ -150,8 +150,9 @@ wszystkich dalszych węzłów. Nie uwierzytelnia odbiorcy i nie potwierdza fakt�
 - Nasłuch TCP jest na wszystkich interfejsach, a BLE przyjmuje nieuwierzytelnione
   zapisy GATT. Dostęp do łącza pozwala podawać fałszywe raporty, zapełniać
   historię lub blokować odbiór. Tylko zaufane urządzenia i środowisko testowe.
-- BLE sprawdzono na dwóch urządzeniach. Nie sprawdzono trzech węzłów BLE,
-  zasięgu, zużycia baterii, odporności na zakłócenia ani WiFi Aware.
+- BLE sprawdzono na trzech fizycznych urządzeniach: zegarek → A22 → A51,
+  a powrót tego samego UUID z A51 do A22 nie dodał duplikatu.
+  Nie sprawdzono zasięgu, zużycia baterii, odporności na zakłócenia ani WiFi Aware.
 
 ### Testy bieżącej wersji
 
@@ -262,6 +263,14 @@ Ta jawna akcja zastępuje stare adresy *oczekujących* dostarczeń w danym łąc
 zachowując UUID. Samo skanowanie lub zastosowanie listy nie przekierowuje
 wiadomości z już przypisanym starym adresem. Stałe tożsamości węzłów nie istnieją.
 
+Od wersji **1.1.1** transport zachowuje obiekty `BluetoothDevice` otrzymane
+ze skanera (do 8 urządzeń z ostatniego skanu), zamiast odtwarzać każde wybrane
+urządzenie wyłącznie z tekstowego MAC. Zachowuje to metadane adresu LE dostarczone
+przez platformę. Skan wykonuj na **każdym nadawcy osobno**; adres widoczny na
+innym urządzeniu nie zastępuje jego lokalnego wyniku skanowania. Pamięć tych
+obiektów jest ulotna — po restarcie lub ponownym uruchomieniu nasłuchu może być
+potrzebny nowy skan. Nie jest to stała tożsamość ani uwierzytelnienie sąsiada.
+
 `BleMeshTransport` przenosi CMF2 i tę samą długość co TCP.
 Usługa GATT to `d9e0b821-484c-4a01-9ada-b8700e4182a1`,
 a charakterystyka zapisu to `d9e0b822-484c-4a01-9ada-b8700e4182a1`.
@@ -329,6 +338,39 @@ Dowody: [wyniki](evidence/durable-smoke.json),
   odtworzył go w historii. Nie ma automatycznego czyszczenia tych znaczników.
 - Testy restartów i błędów transakcji nie są testem nagłego zaniku zasilania
   podczas fizycznego zapisu do pamięci urządzenia.
+
+### Trzy fizyczne węzły BLE — 1.1.1
+
+Jedna publikacja `CM1|7|2|unknown|water`, UUID
+`8ed1670e-0fd1-43de-9951-12ef716a5a18`, przeszła trasę
+**Galaxy Watch4 → Galaxy A22 5G → Galaxy A51**. Zegarek miał tylko A22
+jako sąsiada — nie miał bezpośredniej trasy do A51. Potwierdzenia obu połączeń
+oraz raport i ten sam UUID odczytano z rzeczywistych baz SQLite.
+
+| Urządzenie | Rola | Raporty przed | Raporty po | Oczekujące po | Budżet wychodzącej koperty |
+|---|---|---:|---:|---:|---:|
+| Galaxy Watch4 | źródło, ponowne wysłanie istniejącego raportu | 7 | 7 | 0 | 3 |
+| Galaxy A22 5G | przekaźnik | 9 | 10 | 0 | 2 |
+| Galaxy A51 | odbiorca, następnie przekazanie z powrotem do A22 | 0 | 1 | 0 | 1 |
+
+UUID i dokładne bajty oczekującej ramki przetrwały aktualizację zegarka.
+Pierwsze przejście odbyło się z wersją 1.1.1 na źródle i przekaźniku oraz 1.1
+na A51. Aktualizacja A51 do 1.1.1 zachowała odebrany raport i ramkę dalszego
+przekazania. Po lokalnym skanie na A51 i zastosowaniu A22 wiadomość wróciła
+z tym samym UUID: potwierdzona kolejka A51, nadal 10 raportów na A22 i 1 na A51.
+Końcowo ta sama wersja 1.1.1 została zainstalowana na wszystkich trzech urządzeniach.
+
+Próba po aktualizacji obejmowała także restart odbiorcy i ponowne lokalne
+wyszukanie sąsiadów; nie odizolowano jednego czynnika wcześniejszych timeoutów.
+Wersja 1.1.1 zachowuje urządzenia ze skanu, ale nie rozwiązuje stałej tożsamości
+ani rotacji adresów. Wi-Fi pozostało włączone do sterowania przez ADB:
+to test transmisji **BLE**, nie test z wyłączonymi wszystkimi innymi radiami.
+Komputer nie wysyłał charakterystyk GATT z komunikatami mesh.
+
+Dowody: [ramki, UUID, potwierdzenia i wyniki](evidence/three-node-ble-smoke.json),
+[A22 po przekazaniu](evidence/three-node-a22-relay.png),
+[A51 po powrocie tego samego UUID](evidence/three-node-a51-final.png).
+
 
 
 

@@ -1,0 +1,113 @@
+{
+  "recorded_at_host_utc": "2026-10-19T18:05:04.786614+00:00",
+  "verification_status": "passed_physical_three_node_delivery_and_duplicate_cycle",
+  "protocol": "CMF2",
+  "message_uuid": "8ed1670e-0fd1-43de-9951-12ef716a5a18",
+  "payload": "CM1|7|2|unknown|water",
+  "devices": {
+    "source": "Samsung Galaxy Watch4 SM-R865F",
+    "relay": "Samsung Galaxy A22 5G SM-A226B",
+    "final_recipient": "Samsung Galaxy A51 SM-A515F"
+  },
+  "versions_at_delivery": {
+    "source": "1.1.1",
+    "relay": "1.1.1",
+    "final_recipient_last_confirmed": "1.1"
+  },
+  "publication_count": 1,
+  "queued_uuid_and_frame_survived_source_apk_upgrade": true,
+  "source_frame_hex": "434d46328ed1670e0fd143de995112ef716a5a1803434d317c377c327c756e6b6e6f776e7c7761746572",
+  "relay_forward_frame_hex": "434d46328ed1670e0fd143de995112ef716a5a1802434d317c377c327c756e6b6e6f776e7c7761746572",
+  "observed_forwarding_budgets": {
+    "source_outgoing": 3,
+    "relay_outgoing": 2,
+    "final_recipient_outgoing": 1
+  },
+  "source": {
+    "reports": 7,
+    "pending": 0,
+    "delivery": {
+      "peer": "40:1B:4B:3C:4B:19",
+      "state": 1,
+      "attempts": 1,
+      "error": "",
+      "retained_frame_bytes": null
+    }
+  },
+  "relay": {
+    "reports_before": 9,
+    "reports_after": 10,
+    "uuid_present": true,
+    "pending": 0,
+    "onward_delivery": {
+      "peer": "4E:C1:53:F6:5C:2D",
+      "state": 1,
+      "attempts": 1,
+      "error": "",
+      "retained_frame_bytes": null
+    }
+  },
+  "final_recipient": {
+    "commit_receipt_observed_by_relay": true,
+    "database_directly_inspected": true,
+    "uuid_present": true,
+    "payload": "CM1|7|2|unknown|water",
+    "reports_before": 0,
+    "reports_after": 1,
+    "pending": 0,
+    "report_and_forward_frame_preserved_by_upgrade": true,
+    "cycle_replay_checked": true,
+    "cycle_delivery": {
+      "peer": "40:1B:4B:3C:4B:19",
+      "state": 1,
+      "attempts": 1,
+      "error": "",
+      "retained_frame_bytes": null
+    },
+    "relay_reports_before_cycle": 10,
+    "relay_reports_after_cycle": 10
+  },
+  "tests": {
+    "jvm_passed": 17,
+    "android_instrumentation_passed_on_physical_A22": 12
+  },
+  "ble_scanner_change": {
+    "retains_scanned_device_objects": true,
+    "sole_cause_isolated": false,
+    "qualification": "The receiver was also restarted/upgraded and the origin performed local rediscovery; the successful run does not isolate one factor alone."
+  },
+  "limitations": [
+    "ADB Wi-Fi remained enabled for control; this was not a Wi-Fi-disabled test.",
+    "Neighbor receipts are not authenticated and are not an end-to-end receipt.",
+    "Device wall clocks differ; cross-device timestamps are not used to order the proof.",
+    "No PC characteristic writes were performed; PC probes only scanned advertisements or attempted service discovery."
+  ],
+  "version": "1.1.1",
+  "apk_sha256": "179b9b7f3f4c589917d80e5ad8f425f39709c8cc34eed90a04ce67c56dee4eb7",
+  "final_verified_at_host_utc": "2026-10-19T18:23:42.485349+00:00",
+  "final_installed_versions": {
+    "source": "1.1.1",
+    "relay": "1.1.1",
+    "final_recipient": "1.1.1"
+  },
+  "final_forward_frame_hex": "434d46328ed1670e0fd143de995112ef716a5a1801434d317c377c327c756e6b6e6f776e7c7761746572",
+  "screenshots": [
+    "three-node-a22-relay.png",
+    "three-node-a51-final.png"
+  ],
+  "post_upgrade_peer_refresh": {
+    "required": true,
+    "completed": true,
+    "reason": "After the recipient address rotated, the relay rediscovered it locally and persisted the new neighbor without republishing.",
+    "current_recipient_peer": "70:39:F8:A6:2E:E3",
+    "relay_reports_after_refresh": 10,
+    "relay_pending_after_refresh": 0
+  },
+  "cleanup": {
+    "instrumentation_apk_removed": true,
+    "temporary_debug_relays_and_keepalives_stopped": true,
+    "watch_timeout_restored_ms": 15000,
+    "relay_timeout_restored_ms": 300000,
+    "final_receiver_timeout_restored_ms": 300000
+  }
+}

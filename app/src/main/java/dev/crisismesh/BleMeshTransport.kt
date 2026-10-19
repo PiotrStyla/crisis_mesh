@@ -28,6 +28,8 @@ class BleMeshTransport(context: Context) : MeshTransport {
     private var stopScanTask: Runnable? = null
     private var generation = 0
     private val sends = HashSet<BluetoothGatt>()
+    // Preserve LE address metadata supplied by the scanner, not just the MAC.
+    private val scannedDevices = HashMap<String, BluetoothDevice>()
 
     @Synchronized
     override fun listen(port: Int, onPacket: (ByteArray) -> Unit, onStatus: (String) -> Unit) {
@@ -154,7 +156,8 @@ class BleMeshTransport(context: Context) : MeshTransport {
             val gatt = synchronized(this) {
                 check(token == generation) { "Transport został zamknięty" }
                 check(sends.size < 8) { "Too many connections" }
-                bt.getRemoteDevice(address).connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
+                val device = scannedDevices[address] ?: bt.getRemoteDevice(address)
+                device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
                     ?.also { sends.add(it) } ?: error("Nie można połączyć GATT")
             }
             fun await(expected: String) {
@@ -197,6 +200,7 @@ class BleMeshTransport(context: Context) : MeshTransport {
     @Synchronized
     fun startScan(onDevice: (String) -> Unit, onStatus: (String) -> Unit) {
         stopScan()
+        scannedDevices.clear()
         try {
             val bt = adapter
             check(bt != null && bt.isEnabled) { "Bluetooth niedostępny lub wyłączony" }
@@ -204,7 +208,13 @@ class BleMeshTransport(context: Context) : MeshTransport {
             val callback = object : ScanCallback() {
                 override fun onScanResult(callbackType: Int, result: ScanResult) {
                     synchronized(this@BleMeshTransport) {
-                        if (scan === this) onDevice("Crisis Mesh|${result.device.address}")
+                        if (scan === this) {
+                            val device = result.device
+                            if (scannedDevices.size < 8 || scannedDevices.containsKey(device.address)) {
+                                scannedDevices[device.address] = device
+                                onDevice("Crisis Mesh|${device.address}")
+                            }
+                        }
                     }
                 }
                 override fun onScanFailed(errorCode: Int) {
@@ -246,6 +256,7 @@ class BleMeshTransport(context: Context) : MeshTransport {
     override fun close() {
         generation++
         stopScan()
+        scannedDevices.clear()
         advertising?.let { runCatching { adapter?.bluetoothLeAdvertiser?.stopAdvertising(it) } }
         advertising = null
         runCatching { server?.close() }

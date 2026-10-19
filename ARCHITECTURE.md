@@ -1,6 +1,6 @@
 # Crisis Mesh — tablica architektury
 
-Stan: **wersja 1.1 / CMF2 — trwała historia, deduplikacja i kolejka offline**.
+Stan: **wersja 1.1.1 / CMF2 — trwała kolejka i potwierdzona trasa trzech fizycznych węzłów BLE**.
 Ta sama aplikacja Kotlin/Compose działa na telefonie i zegarku; każde urządzenie
 może być nadawcą, odbiorcą i przekaźnikiem. Komputer/ADB służyły do sterowania
 podczas testów, **nie są wymaganym serwerem komunikacji**.
@@ -88,7 +88,7 @@ flowchart TB
 | [ReportStore.kt](app/src/main/java/dev/crisismesh/ReportStore.kt) | SQLite `crisis.db`: raporty, skróty UUID, kolejka, sąsiedzi i konfiguracja. Jednorazowa, transakcyjna migracja z zachowanego JSON. |
 | [MeshNode.kt](app/src/main/java/dev/crisismesh/MeshNode.kt) | Koperta CMF2, publikowanie i ponawianie trwałej kolejki. Przekazywanie jest planowane atomowo przez `ReportStore.accept`. |
 | [MeshTransport.kt](app/src/main/java/dev/crisismesh/MeshTransport.kt) | Interfejs transportu i implementacja TCP. |
-| [BleMeshTransport.kt](app/src/main/java/dev/crisismesh/BleMeshTransport.kt) | Serwer/klient GATT, reklamowanie usługi, skan i potwierdzane zapisy. |
+| [BleMeshTransport.kt](app/src/main/java/dev/crisismesh/BleMeshTransport.kt) | Serwer/klient GATT, reklamowanie i potwierdzane zapisy. Lokalny skan zachowuje do 8 obiektów `BluetoothDevice` z metadanymi adresów LE; nie są to stałe tożsamości. |
 | [MeshFrames.kt](app/src/main/java/dev/crisismesh/MeshFrames.kt) | Fragmentacja i ograniczony bufor składania ramek BLE. |
 | [backend.py](backend.py), [benchmark.py](benchmark.py) | Oddzielny eksperyment GoLLeM na komputerze, przez patchowany llama.cpp; nie backend produkcyjny aplikacji. |
 
@@ -135,10 +135,9 @@ na tablicy opisuje cel integracji, nie działającą funkcję.
 
 | Obszar | Status i dowód |
 |---|---|
-| Telefon ↔ zegarek przez BLE | Sprawdzone na Galaxy A22 5G i Galaxy Watch 4, także bez Wi-Fi telefonu. [Wyniki](evidence/ble-smoke.json), [telefon](evidence/ble-phone.png), [zegarek](evidence/ble-watch-report.png). |
+| Telefon ↔ zegarek przez BLE, historyczne CMF1 | Sprawdzone na Galaxy A22 5G i Galaxy Watch 4, także bez Wi-Fi telefonu. [Wyniki](evidence/ble-smoke.json), [telefon](evidence/ble-phone.png), [zegarek](evidence/ble-watch-report.png). |
 | TCP przez LAN / hotspot | Sprawdzone na fizycznym telefonie; szczegóły w [README](README.md#weryfikacja-na-fizycznych-urządzeniach-2026-10-19). |
-| Łańcuch trzech węzłów i pętle | Sprawdzone przez TCP loopback z SQLite w testach instrumentacyjnych; historycznie także na emulatorach. Nie jest to dowód trzywęzłowego BLE. |
-| Radio BLE z trzema urządzeniami | Niesprawdzone — potrzebny trzeci fizyczny węzeł. |
+| Trzy fizyczne węzły BLE i pętla | Galaxy Watch4 → A22 → A51; powrót tego samego UUID do A22 nie dopisał raportu. Koperty z budżetami 3, 2, 1 i stany kolejki odczytano z SQLite. [Wyniki i wersje](evidence/three-node-ble-smoke.json), [przekaźnik](evidence/three-node-a22-relay.png), [odbiorca](evidence/three-node-a51-final.png). |
 | Trwała deduplikacja, kolejka offline, retry | Zaimplementowane. Restart nadawcy i odbiorcy, powrót sąsiada TCP/BLE oraz zmiana MAC sprawdzone na sprzęcie. [Wyniki](evidence/durable-smoke.json). |
 | Praca w tle, zasięg, bateria | Brak gwarancji i testów operacyjnych. |
 | Szyfrowanie i uwierzytelnianie | Brak implementacji. Tylko prototyp w zaufanym środowisku. |
