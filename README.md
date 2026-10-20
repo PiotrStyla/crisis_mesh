@@ -132,9 +132,36 @@ właściwym adresem do testu hotspotu. Aktualny adres odczytano z systemu, nie z
 końcówki `.1`. Hasło pozostaje na ekranie telefonu i nie trafia do dowodów.
 Komputer zachował własne połączenie Wi-Fi.
 
-Pozostają połączenie drugiego urządzenia z hotspotem oraz automatyczne przekazywanie
-Android → Android 1.2. Pozostałe urządzenia nie były aktualizowane w tej próbie.
-[Dowody fizycznego A22](evidence/physical-a22-smoke.json).
+Na tym etapie nie testowano jeszcze automatycznego przekazywania między fizycznymi
+Androidami ani zewnętrznego klienta hotspotu.
+[Dowody tego etapu na A22](evidence/physical-a22-smoke.json).
+
+### Dwa fizyczne telefony — automatyczne BLE 1.2.0
+
+A51 został zaktualizowany z 1.1.1 do 1.2.0. Migracja bazy 1 → 2 zachowała
+jedyny raport, wszystkie jego pola oraz istniejący UUID, skrót i powiązanie z raportem.
+Telefon automatycznie wykrył A22, bez wpisywania adresu sąsiada.
+
+Jedno kontrolowane nadanie istniejącego testowego pakietu `CM1|7|2|unknown|water`
+otrzymało nowy UUID `4e57025f-d71a-4144-ad9d-cc3593d79c84`.
+Kolejka A51 zapisała potwierdzenie od `node:abe7c9e372604a2c` przy pierwszej
+próbie, bez błędu; historia A51 nadal zawiera jeden, niezmieniony raport.
+To rzeczywista transmisja Android → Android, nie odtworzenie pakietu przez PC.
+Dowodem jest potwierdzenie zapisu sąsiada według kontraktu CMF2; baza odbiorcy
+nie została jeszcze ponownie odczytana bezpośrednio po tej transmisji.
+Ta próba nie potwierdza trasy przez trzy fizyczne urządzenia ani późnego dołączenia.
+
+**Hotspot: klient połączony, odczyt HTTP nadal nie działa.** A51 dołączył do
+hotspotu A22, zaakceptował brak internetu i dostał adres `10.98.64.15/24`
+z bramą `10.98.64.202`. Próba `/health` na porcie 8080 zatrzymała się w stanie
+TCP `SYN-SENT` i zakończyła timeoutem; wyświetlenia tablicy w przeglądarce
+zewnętrznego klienta nie potwierdzono. Przyczyna wymaga diagnozy po stronie A22,
+który w tej chwili nie jest podłączony przez USB. Wcześniejszy własny HTTP 200
+na A22 nie zastępuje tej próby.
+
+Przywrócono oryginalny czas wygaszania A51 i usunięto tymczasowy zrzut UI.
+Hasła hotspotu i prywatne notatki nie trafiły do repozytorium.
+[Dowody dwóch fizycznych telefonów](evidence/physical-two-phone-smoke.json).
 
 
 

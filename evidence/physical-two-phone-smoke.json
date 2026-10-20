@@ -1,0 +1,71 @@
+{
+  "recorded_at_host_utc": "2026-10-20T07:00:21.227121+00:00",
+  "version": "1.2.0",
+  "version_code": 4,
+  "apk_sha256": "84267cbc7adc8b1aa2112be8efee73063d7854b7fecd0358a6ac321b6a32cfa4",
+  "sender": {
+    "model": "SM-A515F",
+    "android": "13",
+    "stable_node_id": "9560f11eb7fc457a"
+  },
+  "receiver": {
+    "model": "SM-A226B",
+    "stable_node_id": "abe7c9e372604a2c",
+    "receiver_database_direct_readback_after_this_publication": false
+  },
+  "sender_migration": {
+    "from_version": "1.1.1",
+    "from_schema": 1,
+    "to_schema": 2,
+    "reports_before": 1,
+    "reports_after": 1,
+    "all_original_report_fields_preserved": true,
+    "original_uuid_records_preserved": 1,
+    "uuid_records_after_controlled_publication": 2
+  },
+  "automatic_ble": {
+    "physical_android_to_android": true,
+    "manual_peer_address_entry": false,
+    "automatic_peer_discovery_verified": true,
+    "new_test_publications": 1,
+    "test_payload": "CM1|7|2|unknown|water",
+    "message_uuid": "4e57025f-d71a-4144-ad9d-cc3593d79c84",
+    "outbox_peer": "node:abe7c9e372604a2c",
+    "outbox_state": 1,
+    "attempts": 1,
+    "error": "",
+    "source_history_unchanged": true,
+    "ack_scope": "Neighbour-storage acknowledgement under the CMF2 receiver commit-before-ATT-response contract; not a human or emergency-service acknowledgement."
+  },
+  "hotspot_client": {
+    "client_model": "SM-A515F",
+    "native_wifi_association_verified": true,
+    "client_ipv4": "10.98.64.15",
+    "gateway_ipv4": "10.98.64.202",
+    "url": "http://10.98.64.202:8080/",
+    "offline_network_confirmation": "Connect only this time",
+    "health_http_status": null,
+    "tcp_state_during_health_request": "SYN-SENT",
+    "netcat_exit_code": 1,
+    "netcat_error": "nc: Timeout",
+    "browser_render_verified": false,
+    "result": "TCP connection timed out despite Wi-Fi association. Root cause is not yet isolated.",
+    "host_self_probe_prior_evidence": "physical-a22-smoke.json"
+  },
+  "scope_limits": [
+    "One acknowledged physical A51-to-A22 publication, not a three-physical-node or physical late-join proof.",
+    "Receiver database has not been read directly after this publication; sender outbox records the storage acknowledgement.",
+    "Hotspot HTTP from the external client did not succeed. A22 USB access is needed for source-side diagnosis; only A51 is currently attached.",
+    "No background-operation, operational-range or rescue-response guarantee."
+  ],
+  "privacy": {
+    "private_database_or_notes_exported": false,
+    "hotspot_password_exported": false
+  },
+  "cleanup": {
+    "sender_original_screen_timeout_restored": true,
+    "sender_temporary_ui_dump_removed": true,
+    "sender_left_connected_to_test_hotspot": true,
+    "workstation_wifi_not_switched": true
+  }
+}
