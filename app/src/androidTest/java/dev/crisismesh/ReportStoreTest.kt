@@ -126,23 +126,4 @@ class ReportStoreTest {
         }
     }
 
-    @Test fun readdressingRotatingBlePeerKeepsUuidAndHistoryDeletionCancelsPending() {
-        Fixture().use { f ->
-            var store = f.open()
-            val report = store.add(Codec.unpack(payload), "form", "")
-            store.configurePeers("ble", listOf("AA:BB:CC:DD:EE:01"))
-            val id = store.enqueue(payload, "ble", 4, report.id)
-            store.configurePeers("ble", listOf("AA:BB:CC:DD:EE:02"))
-            assertEquals("AA:BB:CC:DD:EE:01", store.nextPending("ble")!!.peer) // No silent readdressing.
-            store.retargetPending("ble")
-            store = f.open()
-            val redirected = store.nextPending("ble")!!
-            assertEquals("AA:BB:CC:DD:EE:02", redirected.peer)
-            assertEquals(id, MeshMessage.decode(redirected.frame).id)
-            store.delete(report.id)
-            assertNull(store.nextPending("ble"))
-            assertFalse(store.accept(MeshMessage(id, 0, payload), "ble"))
-            assertTrue(store.load().isEmpty())
-        }
-    }
 }

@@ -1,0 +1,182 @@
+{
+  "recorded_at_host_utc": "2026-10-20T06:04:00.661973+00:00",
+  "version": "1.2.0",
+  "apk_sha256": "84267cbc7adc8b1aa2112be8efee73063d7854b7fecd0358a6ac321b6a32cfa4",
+  "protocol": "CMF2",
+  "verification_scope": "Three Android/Wear emulators using their native Bluetooth stack; not a physical RF or range test.",
+  "message_uuid": "4c39965a-2f71-424c-9b71-31facfbab6e3",
+  "payload": "CM1|3|1|unknown|water",
+  "publication_count": 1,
+  "source_report_id": "1331b843-f35d-4971-8aee-f264159388cf",
+  "profiles": {
+    "emulator-5554": "LLM_API / API 36",
+    "emulator-5556": "Wear5_SmallRound / API 34",
+    "emulator-5558": "Wear5_Rect / API 34"
+  },
+  "nodes": {
+    "emulator-5554": {
+      "node_id": "7ba70badc19d440a",
+      "reports_before": 6,
+      "reports_after": 7,
+      "target_uuid_present": true,
+      "target_payload": "CM1|3|1|unknown|water",
+      "retained_forward_hops": 3,
+      "pending": 0,
+      "peers": [
+        "node:5b4c5a7733c148f0",
+        "node:a35c80c1d8be4931"
+      ],
+      "target_receipts": [
+        {
+          "peer": "node:5b4c5a7733c148f0",
+          "state": 1,
+          "attempts": 1,
+          "error": ""
+        },
+        {
+          "peer": "node:a35c80c1d8be4931",
+          "state": 1,
+          "attempts": 1,
+          "error": ""
+        }
+      ]
+    },
+    "emulator-5556": {
+      "node_id": "a35c80c1d8be4931",
+      "reports_before": 0,
+      "reports_after": 1,
+      "target_uuid_present": true,
+      "target_payload": "CM1|3|1|unknown|water",
+      "retained_forward_hops": 2,
+      "pending": 0,
+      "peers": [
+        "node:5b4c5a7733c148f0",
+        "node:7ba70badc19d440a"
+      ],
+      "target_receipts": [
+        {
+          "peer": "node:5b4c5a7733c148f0",
+          "state": 1,
+          "attempts": 1,
+          "error": ""
+        },
+        {
+          "peer": "node:7ba70badc19d440a",
+          "state": 1,
+          "attempts": 1,
+          "error": ""
+        }
+      ]
+    },
+    "emulator-5558": {
+      "node_id": "5b4c5a7733c148f0",
+      "reports_before": 0,
+      "reports_after": 1,
+      "target_uuid_present": true,
+      "target_payload": "CM1|3|1|unknown|water",
+      "retained_forward_hops": 1,
+      "pending": 0,
+      "peers": [
+        "node:7ba70badc19d440a",
+        "node:a35c80c1d8be4931"
+      ],
+      "target_receipts": [
+        {
+          "peer": "node:7ba70badc19d440a",
+          "state": 1,
+          "attempts": 1,
+          "error": ""
+        },
+        {
+          "peer": "node:a35c80c1d8be4931",
+          "state": 1,
+          "attempts": 1,
+          "error": ""
+        }
+      ]
+    }
+  },
+  "late_join": {
+    "third_node_started_after_first_neighbor_receipt": true,
+    "same_uuid_received_without_new_publication": true,
+    "exclusive_chain_topology": false
+  },
+  "restart": {
+    "uuid_payload_history_and_receipts_survived_apk_updates": true,
+    "same_node_ids_rediscovered": true
+  },
+  "initial_discovery": {
+    "initial_no_peer_observation": true,
+    "subsequent_discovery_and_delivery_after_app_restarts": true,
+    "isolated_cause": null,
+    "qualification": "Temporary probe observed valid UUID service data. Restart changed runtime conditions; no single radio cause was isolated."
+  },
+  "browser": {
+    "actual_chrome_render": true,
+    "route": "ADB TCP 18080 forward to Android HTTP 8080",
+    "viewport": [
+      390,
+      844
+    ],
+    "report_visible": true,
+    "private_note_absent": true,
+    "external_domains_blocked_on_final_run": true,
+    "live_post_status": 405,
+    "screenshot": "auto-mesh-board.png"
+  },
+  "hotspot": {
+    "android_onStarted_and_ready_observed": true,
+    "physical_client_connection_verified": false,
+    "fixed_gateway_assumed": false,
+    "captive_portal_implemented": false
+  },
+  "contacts": {
+    "configured_test_recipient": "5550100",
+    "system_sms_composer_observed": true,
+    "correct_report_and_cm1_in_editor": true,
+    "private_note_absent": true,
+    "send_action_performed": false,
+    "delivery_confirmed": false,
+    "test_recipient_removed": true,
+    "screenshot": "auto-mesh-sms-preview.png"
+  },
+  "sos": {
+    "report_uuid_queue_atomic": true,
+    "llm_required": false,
+    "neighbor_receipt_is_human_or_emergency_service_ack": false
+  },
+  "tests": {
+    "jvm_passed": 22,
+    "android_instrumentation_passed": 18,
+    "android_target": "emulator-5554"
+  },
+  "limits": {
+    "discovery_scan_seconds": 10,
+    "scan_start_interval_seconds": 40,
+    "endpoint_freshness_seconds": 120,
+    "endpoint_and_neighbor_cap": 64,
+    "local_forward_retention_hours": 24,
+    "end_to_end_expiry_in_cmf2": false,
+    "authenticated_nodes": false,
+    "encryption": false,
+    "guaranteed_background_operation": false
+  },
+  "physical_verification": {
+    "new_version_installed_on_user_physical_devices": false,
+    "blocked_reason": "No physical device listed by ADB; mDNS discovery empty and previous Wi-Fi connection attempt timed out. USB phone requested."
+  },
+  "cleanup": {
+    "temporary_probe_removed": true,
+    "public_board_and_hotspot_stopped": true,
+    "browser_tabs_closed": true,
+    "adb_forward_removed": true,
+    "test_instrumentation_uninstalled": true,
+    "temporary_device_dumps_removed": true,
+    "owned_emulators_stopped": true
+  },
+  "screenshots": [
+    "auto-mesh-board.png",
+    "auto-mesh-sms-preview.png",
+    "auto-mesh-watch.png"
+  ]
+}

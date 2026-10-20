@@ -52,9 +52,10 @@ class MeshNode(
     fun start(onChanged: () -> Unit, onStatus: (String) -> Unit) {
         changed = onChanged
         status = onStatus
-        if (store.listenRequested(kind)) {
-            if (canSend()) listen(8765, {}, onStatus)
-            else status("Odbiór oczekuje na uprawnienia Bluetooth")
+        if (kind == "ble" && store.autoMeshEnabled()) {
+            if (canSend()) joinNetwork() else status("Dołączenie oczekuje na uprawnienia Bluetooth")
+        } else if (kind != "ble" && store.listenRequested(kind)) {
+            listen(8765, {}, onStatus)
         }
         startWorker()
     }
@@ -70,19 +71,47 @@ class MeshNode(
     }
 
     fun configurePeers(text: String) {
+        require(kind == "tcp") { "BLE wykrywa sąsiadów automatycznie" }
         val next = text.split(',', '\n').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
         require(next.size <= 8) { "Maksymalnie 8 sąsiadów" }
         require(next.all { address ->
-            if (kind == "ble") MAC_ADDRESS.matches(address)
-            else {
-                val cut = address.lastIndexOf(':')
-                cut > 0 && address.substring(0, cut).none { it.isWhitespace() } &&
-                    address.substring(cut + 1).toIntOrNull() in 1..65535
-            }
-        }) { if (kind == "ble") "Podaj adresy MAC BLE po przecinku" else "Podaj adresy host:port po przecinku" }
+            val cut = address.lastIndexOf(':')
+            cut > 0 && address.substring(0, cut).none { it.isWhitespace() } &&
+                address.substring(cut + 1).toIntOrNull() in 1..65535
+        }) { "Podaj adresy host:port po przecinku" }
         store.configurePeers(kind, next)
         changed()
         wakeQueue()
+    }
+
+    fun joinNetwork() {
+        check(kind == "ble" && transport is BleMeshTransport)
+        store.setAutoMesh(true)
+        listen(8765, {}, status)
+        transport.startDiscovery({ peer ->
+            try {
+                store.discoverPeer(peer)
+                changed()
+                wakeQueue()
+            } catch (e: Exception) { status("Błąd zapisu wykrytego węzła: ${e.message}") }
+        }, status)
+        changed()
+    }
+
+    fun leaveNetwork() {
+        if (kind == "ble") store.setAutoMesh(false)
+        store.requestListen(kind, false)
+        transport.close()
+        status("Odłączono. Zapisane SOS pozostają w kolejce do ponownego dołączenia.")
+        changed()
+    }
+
+    fun publishReport(report: Codec.Report, note: String): StoredReport {
+        val item = store.addAndEnqueue(report, note, kind)
+        status("SOS zapisano w kolejce. Brak potwierdzenia przyjęcia pomocy przez człowieka.")
+        changed()
+        wakeQueue()
+        return item
     }
 
     fun listen(port: Int, onPacket: (ByteArray) -> Unit, onStatus: (String) -> Unit) {
@@ -107,11 +136,6 @@ class MeshNode(
         startWorker()
     }
 
-    fun stopListening() {
-        store.requestListen(kind, false)
-        transport.close()
-        status("Odbiór wyłączony; kolejka nadal działa przy otwartej aplikacji")
-    }
 
     /** New user action = new UUID; every automatic retry reuses the stored frame and UUID. */
     fun publish(payload: ByteArray, maxHops: Int = 4, reportId: String? = null): UUID {
@@ -122,18 +146,16 @@ class MeshNode(
         return id
     }
 
-    /** Explicitly replace old pending destinations, e.g. after a BLE private address rotated. */
-    fun retryWithCurrentPeers() {
-        store.retargetPending(kind)
-        status("Oczekujące przypisano do obecnych sąsiadów")
-        changed()
-        wakeQueue()
-    }
 
     private fun drain() {
-        if (closed || !canSend() || !busy.compareAndSet(false, true)) return
+        if (closed || !busy.compareAndSet(false, true)) return
         try {
-            val item = store.nextPending(kind)
+            if (store.expireForwarding() > 0) changed()
+            if (!canSend() || (kind == "ble" && !store.autoMeshEnabled())) {
+                busy.set(false)
+                return
+            }
+            val item = store.nextPending(kind, (transport as? BleMeshTransport)?.reachablePeers())
             if (item == null) {
                 busy.set(false)
                 return

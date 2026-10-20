@@ -14,10 +14,10 @@ import java.util.concurrent.TimeUnit
 
 /** One ordered sequence of acknowledged 20-byte ATT writes per connection.
  * The last write response follows the receive COMMIT (or durable duplicate lookup).
- * No pairing, encryption, background service or discovery identity is implied.
+ * Stable discovery IDs are not authenticated identities. No background-service guarantee.
  */
 @SuppressLint("MissingPermission")
-class BleMeshTransport(context: Context) : MeshTransport {
+class BleMeshTransport(context: Context, private val nodeId: String) : MeshTransport {
     private val context = context.applicationContext
     private val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private val adapter get() = manager.adapter
@@ -29,7 +29,19 @@ class BleMeshTransport(context: Context) : MeshTransport {
     private var generation = 0
     private val sends = HashSet<BluetoothGatt>()
     // Preserve LE address metadata supplied by the scanner, not just the MAC.
-    private val scannedDevices = HashMap<String, BluetoothDevice>()
+    private class Endpoint(var device: BluetoothDevice, var seenAt: Long)
+    private val scannedDevices = LinkedHashMap<String, Endpoint>(64, 0.75f, true)
+    private var discovering = false
+    private var discoveryTask: Runnable? = null
+    private val identity = nodeId.chunked(2).map { it.toInt(16).toByte() }.toByteArray().also {
+        require(it.size == 8) { "Invalid node identity" }
+    }
+
+    @Synchronized
+    fun reachablePeers(): Set<String> {
+        val now = android.os.SystemClock.elapsedRealtime()
+        return scannedDevices.filterValues { now - it.seenAt < 120_000 }.keys
+    }
 
     @Synchronized
     override fun listen(port: Int, onPacket: (ByteArray) -> Unit, onStatus: (String) -> Unit) {
@@ -70,6 +82,7 @@ class BleMeshTransport(context: Context) : MeshTransport {
                                 AdvertiseSettings.Builder().setConnectable(true)
                                     .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY).build(),
                                 AdvertiseData.Builder().addServiceUuid(ParcelUuid(SERVICE_UUID)).build(),
+                                AdvertiseData.Builder().addServiceData(ParcelUuid(SERVICE_UUID), identity).build(),
                                 advert,
                             )
                         } catch (e: Exception) {
@@ -121,8 +134,8 @@ class BleMeshTransport(context: Context) : MeshTransport {
     }
 
     override fun send(address: String, payload: ByteArray, onComplete: (Result<Unit>) -> Unit) {
-        if (!MAC_ADDRESS.matches(address)) {
-            onComplete(Result.failure(IllegalArgumentException("Podaj adres BLE jako AA:BB:CC:DD:EE:FF")))
+        if (!NODE_ADDRESS.matches(address)) {
+            onComplete(Result.failure(IllegalArgumentException("Nieprawidłowy identyfikator węzła BLE")))
             return
         }
         val token = synchronized(this) { generation }
@@ -156,7 +169,11 @@ class BleMeshTransport(context: Context) : MeshTransport {
             val gatt = synchronized(this) {
                 check(token == generation) { "Transport został zamknięty" }
                 check(sends.size < 8) { "Too many connections" }
-                val device = scannedDevices[address] ?: bt.getRemoteDevice(address)
+                val endpoint = scannedDevices[address]
+                check(endpoint != null && android.os.SystemClock.elapsedRealtime() - endpoint.seenAt < 120_000) {
+                    "Węzeł poza aktualnym skanem; oczekiwanie na ponowne wykrycie"
+                }
+                val device = endpoint.device
                 device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
                     ?.also { sends.add(it) } ?: error("Nie można połączyć GATT")
             }
@@ -196,11 +213,27 @@ class BleMeshTransport(context: Context) : MeshTransport {
     }
     private val sendLock = Any()
 
-    /** Only Crisis Mesh service advertisers; results expire with scan/address rotation. */
+    /** Periodic foreground discovery; rotating radio addresses resolve to stable peer keys. */
     @Synchronized
-    fun startScan(onDevice: (String) -> Unit, onStatus: (String) -> Unit) {
+    fun startDiscovery(onDevice: (String) -> Unit, onStatus: (String) -> Unit) {
+        if (discovering) return
+        discovering = true
+        val cycle = object : Runnable {
+            override fun run() {
+                synchronized(this@BleMeshTransport) {
+                    if (!discovering) return
+                    scanOnce(onDevice, onStatus)
+                    handler.postDelayed(this, 40_000)
+                }
+            }
+        }
+        discoveryTask = cycle
+        handler.post(cycle)
+    }
+
+    @Synchronized
+    private fun scanOnce(onDevice: (String) -> Unit, onStatus: (String) -> Unit) {
         stopScan()
-        scannedDevices.clear()
         try {
             val bt = adapter
             check(bt != null && bt.isEnabled) { "Bluetooth niedostępny lub wyłączony" }
@@ -209,11 +242,26 @@ class BleMeshTransport(context: Context) : MeshTransport {
                 override fun onScanResult(callbackType: Int, result: ScanResult) {
                     synchronized(this@BleMeshTransport) {
                         if (scan === this) {
-                            val device = result.device
-                            if (scannedDevices.size < 8 || scannedDevices.containsKey(device.address)) {
-                                scannedDevices[device.address] = device
-                                onDevice("Crisis Mesh|${device.address}")
+                            val idBytes = result.scanRecord?.getServiceData(ParcelUuid(SERVICE_UUID)) ?: return
+                            if (idBytes.size != 8) return
+                            val id = buildString(16) {
+                                for (byte in idBytes) {
+                                    val value = byte.toInt() and 255
+                                    append(HEX[value ushr 4]); append(HEX[value and 15])
+                                }
                             }
+                            if (id == nodeId) return
+                            val peer = "node:$id"
+                            val previous = scannedDevices[peer]
+                            val changed = previous == null || previous.device.address != result.device.address
+                            if (previous == null) {
+                                if (scannedDevices.size >= 64) scannedDevices.remove(scannedDevices.keys.first())
+                                scannedDevices[peer] = Endpoint(result.device, android.os.SystemClock.elapsedRealtime())
+                            } else {
+                                previous.device = result.device
+                                previous.seenAt = android.os.SystemClock.elapsedRealtime()
+                            }
+                            if (changed) onDevice(peer)
                         }
                     }
                 }
@@ -245,7 +293,7 @@ class BleMeshTransport(context: Context) : MeshTransport {
     }
 
     @Synchronized
-    fun stopScan() {
+    private fun stopScan() {
         stopScanTask?.let { handler.removeCallbacks(it) }
         stopScanTask = null
         scan?.let { runCatching { adapter?.bluetoothLeScanner?.stopScan(it) } }
@@ -255,6 +303,9 @@ class BleMeshTransport(context: Context) : MeshTransport {
     @Synchronized
     override fun close() {
         generation++
+        discovering = false
+        discoveryTask?.let { handler.removeCallbacks(it) }
+        discoveryTask = null
         stopScan()
         scannedDevices.clear()
         advertising?.let { runCatching { adapter?.bluetoothLeAdvertiser?.stopAdvertising(it) } }
@@ -266,6 +317,8 @@ class BleMeshTransport(context: Context) : MeshTransport {
     }
 
     companion object {
+        private val NODE_ADDRESS = Regex("node:[0-9a-f]{16}")
+        private const val HEX = "0123456789abcdef"
         val SERVICE_UUID: UUID = UUID.fromString("d9e0b821-484c-4a01-9ada-b8700e4182a1")
         val FRAME_UUID: UUID = UUID.fromString("d9e0b822-484c-4a01-9ada-b8700e4182a1")
     }

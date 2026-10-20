@@ -5,8 +5,6 @@
 
 package dev.crisismesh
 
-/** A BLE peer address: six hex octets separated by colons. */
-internal val MAC_ADDRESS = Regex("^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
 
 interface MeshTransport {
     /**

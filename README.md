@@ -1,6 +1,6 @@
 # Crisis Mesh / Radio Officer
 
-Eksperymentalna aplikacja Android/Wear OS do krótkich raportów kryzysowych: formularz → pakiet CM1 → przekazywanie między sąsiadami TCP lub BLE → deterministyczny opis. Repo zawiera też adapter lokalnego GoLLeM i benchmark ekstrakcji. **BLE działa telefon ↔ zegarek na fizycznym sprzęcie; trzywęzłowe przekazywanie sprawdzono dotąd na TCP, nie na radiu BLE.** To nie jest niezawodny system ratunkowy. Nie wysyła SOS do służb.
+Eksperymentalna aplikacja Android/Wear OS do krótkich raportów kryzysowych. **1.2.0:** automatyczne wykrywanie i przekazywanie BLE, lokalna tablica w przeglądarce oraz jawne przekazanie do skonfigurowanego kontaktu przez edytor SMS. Ręczną trasę trzech fizycznych węzłów BLE potwierdzono w 1.1.1; nową automatyczną sieć sprawdzono na emulatorach, nie jeszcze na tych telefonach i zegarku. **To nie jest niezawodny system ratunkowy ani integracja ze służbami.** Repo zawiera też oddzielny eksperyment lokalnego GoLLeM, bez integracji z APK.
 
 **[Tablica architektury](ARCHITECTURE.md)** — przepływ raportu, transport TCP/BLE,
 moduły aplikacji oraz planowana rola lokalnego GoLLeM. Diagram renderuje się w GitHubie.
@@ -64,14 +64,13 @@ Build nie usuwa katalogów; można wskazać istniejący build. Podczas weryfikac
 
 ## Aplikacja Android / Wear OS (`app/`)
 
-Moduł Kotlin + Compose, minSdk 26, target 35. Formularz, lokalna historia,
-import/eksport CM1 i przekazywanie przez TCP lub BLE. `INTERNET` obsługuje TCP
-i **nie ogranicza połączeń do LAN** — adres wpisany przez użytkownika może
-wskazywać publiczny host. Brak wbudowanego endpointu chmurowego.
-BLE prosi o uprawnienia dopiero przy skanowaniu, nasłuchu lub wysyłce:
-„Urządzenia w pobliżu” na Androidzie 12+ (`SCAN`, `CONNECT`, `ADVERTISE`),
-a na Androidzie 8–11 o lokalizację potrzebną systemowi do skanowania BLE.
-Aplikacja nie pobiera pozycji GPS; na Androidzie 12+ skan ma `neverForLocation`.
+Moduł Kotlin + Compose, minSdk 26, target 35. Domyślny transport to BLE;
+TCP pozostaje diagnostyką z ręcznymi adresami. `INTERNET` obsługuje TCP i serwer
+HTTP, nie ogranicza połączeń do LAN. Brak endpointu chmurowego.
+BLE wymaga urządzeń w pobliżu na Androidzie 12+ albo systemowego dostępu do
+lokalizacji na starszych wersjach. Hotspot wymaga `NEARBY_WIFI_DEVICES` na 13+,
+a na 8–12 lokalizacji i odpowiednich ustawień systemu. Aplikacja nie pobiera GPS
+i nie żąda `SEND_SMS`.
 
 Historia, UUID i kolejka dostarczania są zapisane transakcyjnie w prywatnym
 `databases/crisis.db`. Pierwsze uruchomienie wersji **1.1 lub nowszej / CMF2** importuje
@@ -80,6 +79,40 @@ Plik JSON pozostaje nietkniętą kopią migracyjną — nie jest już aktywną h
 Błąd migracji wycofuje import i jest pokazany w UI; nie usuwa starego pliku.
 Przychodzące raporty dostają źródło `mesh`, które **nie uwierzytelnia nadawcy**.
 Notatka pozostaje lokalna, a share sheet dostaje tylko tekst CM1.
+
+### Obsługa 1.2.0
+
+1. Wybierz BLE i **Dołącz do sieci** na każdym uczestniczącym urządzeniu.
+   Zatwierdź uprawnienia. Nasłuch i wykrywanie ruszają razem, bez wpisywania adresów.
+2. Wypełnij formularz i naciśnij **Nadaj zgłoszenie SOS**. Raport, UUID i kolejka
+   zapisują się atomowo, także bez sąsiada lub uprawnień; następnie można dołączyć.
+   LLM nie uczestniczy w wysyłce. „Wyślij” w historii to nowa publikacja z nowym UUID.
+3. **Odłącz od sieci** zatrzymuje radio, nie kasuje historii. Dołączenie jest
+   pamiętane i przywracane w działającym procesie z uprawnieniami. Przełączenie
+   na TCP zamyka BLE; aplikacja nie jest mostem między transportami.
+
+**Bez instalacji:** uruchom tablicę w istniejącym LAN albo lokalny hotspot z tablicą.
+Druga osoba łączy się z wyświetloną siecią, pozostaje w niej mimo braku internetu
+i otwiera osiągalny adres `http://…:8080/`. Lista pochodzi z interfejsów urządzenia;
+nie każdy adres należy do hotspotu. Brak stałego adresu bramy, captive portalu
+i automatycznego powiadamiania cudzych telefonów. Przeglądarka nie przekazuje BLE.
+Publiczna, nieszyfrowana tablica pokazuje do 100 ostatnich **opublikowanych lub
+odebranych** raportów, bez szkiców, notatek i kontaktów. Wpisy są niezweryfikowane,
+odświeżanie ręczne, POST odrzucany kodem 405. Wyłączenie zamyka HTTP i hotspot.
+
+**Kontakty:** zapisz do 5 numerów i wybierz „Przekaż kontaktowi” przy raporcie.
+Wybór odbiorcy otwiera edytor SMS z opisem, CM1 i identyfikatorem raportu, bez
+prywatnej notatki. Człowiek osobno zatwierdza wysyłkę; może ona kosztować kilka
+części SMS. Brak handlera jest błędem, nie sukcesem. To nie automatyczna bramka
+ani integracja z 112. ACK węzła oznacza zapis u sąsiada, nie przeczytanie przez
+człowieka ani wysłanie służb. Otwarcie edytora nie potwierdza wysłania SMS.
+Brak samoczynnych syren, publicznych alarmów i dostępu do Alertu RCB.
+
+Dowody: [wyniki 1.2](evidence/auto-mesh-smoke.json),
+[tablica](evidence/auto-mesh-board.png),
+[systemowy podgląd SMS](evidence/auto-mesh-sms-preview.png),
+[Wear](evidence/auto-mesh-watch.png).
+
 
 ### Historyczna weryfikacja formularza (JSON/CMF1, emulator, 2026-10-16)
 
@@ -97,13 +130,13 @@ Zawartość udostępnianego `EXTRA_TEXT` jest odczytana z kodu, nie zaobserwowan
 w drugiej aplikacji. Automatyzacja UI używa `contentDescription` (`save`,
 `people-plus`, `choice-water`, `import-commit`, `delete`…).
 
-### Multi-hop: `MeshNode` + `TcpMeshTransport`
+### TCP — tryb diagnostyczny
 
-W karcie mesh wpisz do 8 adresów `host:port`, oddzielonych przecinkiem,
-i naciśnij **Zastosuj sąsiadów**. Przycisk **Wyślij** zapisuje wiadomość w kolejce,
-również przy niedostępnym odbiorcy albo bez skonfigurowanego sąsiada.
-Puste pole nie usuwa wiadomości — oczekują one na późniejsze wskazanie sąsiadów.
-Uruchom **Nasłuchuj :8765** na odbiorcy. Edycja pola bez „Zastosuj” nie zmienia konfiguracji.
+Wybierz **TCP · test**, wpisz do 8 adresów `host:port` i naciśnij
+**Zastosuj adresy TCP**. Odbiorca uruchamia **Nasłuchuj TCP :8765**.
+Publikacja trafia do trwałej kolejki także bez sąsiada. Zastosowanie listy
+przypisuje wiadomości bez celu; nie zmienia celów już zaadresowanych
+oczekujących dostarczeń. Ta ścieżka nie wykrywa urządzeń automatycznie.
 
 Świadoma wysyłka tworzy nowy UUID; automatyczne ponowienia zachowują ten sam
 UUID i bajty. Odbiorca waliduje CMF2/CM1 i w jednej transakcji zapisuje raport,
@@ -242,34 +275,30 @@ Zrzuty ekranu potwierdzające odbiór:
    wpisów, więc brak synchronizacji daje nieprawidłowe daty; historia wyświetla
    wpisy w kolejności dodania, nie sortuje po tych datach.
 
-### BLE GATT — obsługa i dowody
+### BLE GATT — automatyczna sieć 1.2.0
 
-Na obu urządzeniach wybierz **BLE** w karcie sieci. Przy pierwszym użyciu
-zaakceptuj systemowy dostęp do urządzeń w pobliżu.
+**Dołącz do sieci** uruchamia skan na 10 s, z kolejnymi początkami co 40 s;
+reklamowanie pozostaje aktywne. Zapisany lokalnie losowy identyfikator 64-bitowy
+jest ogłaszany w danych usługi w odpowiedzi skanowania. Kolejka adresuje
+`node:<identyfikator>`, a skaner zachowuje aktualny obiekt `BluetoothDevice`.
+Zmiana MAC tego samego węzła nie tworzy nowego odbiorcy ani UUID wiadomości.
+To identyfikator, **nie kryptograficznie uwierzytelniona tożsamość**.
 
-1. Na odbiorcy naciśnij **Nasłuchuj BLE**. Poczekaj na status reklamowania.
-2. Na nadawcy naciśnij **Skanuj urządzenia** (skan trwa 10 sekund).
-3. Wybierz wykryte urządzenie i naciśnij **Zastosuj sąsiadów**.
-4. Przy raporcie w historii naciśnij **Wyślij**.
-5. Dla komunikacji w obie strony powtórz konfigurację w odwrotnym kierunku.
+Pamięć endpointów i lista sąsiadów mają limit 64. Endpoint jest uznawany za
+osiągalny przez 120 s od wykrycia; nieosiągalne cele nie blokują wyboru osiągalnego.
+Nie obiecujemy dotarcia do dowolnej liczby urządzeń ani wszystkich telefonów w okolicy.
 
-Przełączenie TCP/BLE zamyka poprzedni transport i przywraca zapamiętaną listę
-sąsiadów wybranego łącza. Kolejka każdego łącza jest oddzielna; nie przenosi się
-automatycznie między TCP a BLE. Żądanie nasłuchu jest pamiętane.
+SQLite v2 zachowuje ramkę także po ACK, aby nowo spotkany węzeł mógł dostać ten sam
+UUID i budżet bez nowej publikacji. Retencja to 24 h od pierwszego lokalnego zapisu,
+zależne od zegara urządzenia — **nie globalny TTL koperty CMF2**.
+Wygaśnięcie usuwa oczekujące dostarczenia i ramkę, nie historię ani deduplikację.
+Usunięcie raportu także anuluje jego przyszłe przekazywanie na tym urządzeniu.
+Migracja v1 odzyskuje tylko oczekujące ramki, z retencją od migracji; nie odtwarza
+dawnych zakończonych publikacji z historii.
 
-MAC BLE może się zmienić. Zeskanuj odbiorcę ponownie, ustaw właściwą listę i
-naciśnij **Zastosuj sąsiadów**, następnie **Ponów do obecnych sąsiadów**.
-Ta jawna akcja zastępuje stare adresy *oczekujących* dostarczeń w danym łączu,
-zachowując UUID. Samo skanowanie lub zastosowanie listy nie przekierowuje
-wiadomości z już przypisanym starym adresem. Stałe tożsamości węzłów nie istnieją.
-
-Od wersji **1.1.1** transport zachowuje obiekty `BluetoothDevice` otrzymane
-ze skanera (do 8 urządzeń z ostatniego skanu), zamiast odtwarzać każde wybrane
-urządzenie wyłącznie z tekstowego MAC. Zachowuje to metadane adresu LE dostarczone
-przez platformę. Skan wykonuj na **każdym nadawcy osobno**; adres widoczny na
-innym urządzeniu nie zastępuje jego lokalnego wyniku skanowania. Pamięć tych
-obiektów jest ulotna — po restarcie lub ponownym uruchomieniu nasłuchu może być
-potrzebny nowy skan. Nie jest to stała tożsamość ani uwierzytelnienie sąsiada.
+Wszystkie węzły automatycznej sieci wymagają 1.2.0. CMF2 GATT pozostaje zgodne
+bajtowo, ale reklamy 1.1.x nie zawierają nowego identyfikatora i nie uczestniczą
+w automatycznym wykrywaniu. Starsze dowody poniżej dotyczą ręcznej konfiguracji.
 
 `BleMeshTransport` przenosi CMF2 i tę samą długość co TCP.
 Usługa GATT to `d9e0b821-484c-4a01-9ada-b8700e4182a1`,
@@ -305,7 +334,7 @@ Dowody: [telefon](evidence/ble-phone.png),
 [pakiet na zegarku](evidence/ble-watch-report.png),
 [wyniki i SHA-256 APK](evidence/ble-smoke.json).
 
-### Trwała kolejka offline — wyniki CMF2
+### Historyczny test trwałej kolejki — 1.1 / CMF2
 
 Migracja na sprzęcie zachowała wszystkie pola i kolejność **8 raportów telefonu
 i 5 zegarka**. Stare pliki JSON są nadal niezmienione. Następnie dodano jeden
@@ -420,4 +449,4 @@ To **payload aplikacji**, nie pełny pakiet radiowy. Nie zawiera nagłówków tr
 
 Kompaktowy formularz i deterministyczny kodek działają. Warstwa modelowa wymaga dalszej pracy i oddzielnej walidacji: np. dostrojenia GoLLeM do ekstrakcji na osobnym zbiorze, z testami na danych niewidzianych. Sama gramatyka JSON może wymusić składnię, ale nie gwarantuje zgodnych faktów. Model nie jest dołączony ani uruchamiany w aplikacji Android.
 
-Nie ma automatycznej diagnozy, triażu medycznego, wnioskowania o utracie przytomności ani samoczynnego alarmu z tętna. Oryginalne zgłoszenie trzeba zachować poza skrótem czterech pól. BLE telefon ↔ zegarek jest sprawdzone, ale radiowy multi-hop na trzech urządzeniach, praca w tle i LoRa nie są zweryfikowanymi funkcjami.
+Nie ma automatycznej diagnozy, triażu medycznego, wnioskowania o utracie przytomności ani samoczynnego alarmu z tętna. CM1 nie zachowuje lokalizacji, czasu zdarzenia ani pełnej treści zgłoszenia. Ręczny multi-hop BLE 1.1.1 potwierdzono na fizycznym sprzęcie; automatyczna sieć 1.2.0 ma osobne dowody emulowane. Praca w tle, zasięg, bateria, fizyczny dostęp do nowego hotspotu i LoRa nie są zweryfikowanymi gwarancjami ratunkowymi.
