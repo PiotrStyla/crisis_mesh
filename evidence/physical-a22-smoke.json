@@ -1,0 +1,78 @@
+{
+  "recorded_at_host_utc": "2026-10-20T06:21:13.656803+00:00",
+  "version": "1.2.0",
+  "version_code": 4,
+  "apk_sha256": "84267cbc7adc8b1aa2112be8efee73063d7854b7fecd0358a6ac321b6a32cfa4",
+  "device": {
+    "model": "SM-A226B",
+    "android": "13",
+    "connection": "USB ADB"
+  },
+  "migration": {
+    "from_version": "1.1.1",
+    "from_schema": 1,
+    "to_schema": 2,
+    "reports_before": 11,
+    "reports_after": 11,
+    "uuid_records_before": 4,
+    "uuid_records_after": 4,
+    "all_ids_dates_sources_payloads_notes_preserved": true,
+    "all_uuid_digests_and_report_links_preserved": true
+  },
+  "android_instrumentation": {
+    "passed": 18,
+    "target": "physical A22",
+    "test_apk_removed": true
+  },
+  "ble": {
+    "joined": true,
+    "stable_node_id": "abe7c9e372604a2c",
+    "advertisement_seen_by_physical_pc_radio": true,
+    "observed_rssi_dbm": -64,
+    "compatible_peers_observed": 0,
+    "pc_duplicate_replay": {
+      "attempted": true,
+      "completed": true,
+      "new_publication": false,
+      "error": null,
+      "acknowledged_writes": 3,
+      "history_and_uuid_records_unchanged": true,
+      "uuid": "8ed1670e-0fd1-43de-9951-12ef716a5a18",
+      "payload": "CM1|7|2|unknown|water",
+      "hops_left": 0,
+      "wire_hex": "0000002a434d46328ed1670e0fd143de995112ef716a5a1800434d317c377c327c756e6b6e6f776e7c7761746572",
+      "sender_is_android_mesh_app": false
+    }
+  },
+  "browser": {
+    "real_chrome_client": true,
+    "url": "http://192.168.0.118:8080/",
+    "route": "direct Wi-Fi LAN; no ADB forwarding",
+    "published_reports_present": 2,
+    "all_published_report_ids_observed": true,
+    "live_post_status": 405,
+    "valid_screenshot_saved": false
+  },
+  "hotspot": {
+    "physical_start_verified": false,
+    "client_connection_verified": false,
+    "pending_reason": "Screen is PIN/fingerprint locked; owner must unlock it. Test HTTP sharing was stopped; app reopened behind keyguard."
+  },
+  "multi_physical_node_1_2_mesh_verified": false,
+  "new_sos_publications": 0,
+  "privacy": {
+    "private_database_or_notes_exported": false,
+    "hotspot_password_exported": false
+  },
+  "limitations": [
+    "PC BLE duplicate reception is not Android-to-Android automatic forwarding proof.",
+    "No other physical Android node was upgraded in this step.",
+    "No guarantee of background operation or rescue-service acceptance."
+  ],
+  "cleanup": {
+    "test_public_board_stopped_by_app_restart": true,
+    "test_instrumentation_removed": true,
+    "temporary_device_dump_removed": true,
+    "screen_timeout_changed": false
+  }
+}

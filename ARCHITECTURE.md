@@ -153,8 +153,9 @@ na tablicy opisuje cel integracji, nie działającą funkcję.
 | TCP przez LAN / hotspot | Sprawdzone na fizycznym telefonie; szczegóły w [README](README.md#weryfikacja-na-fizycznych-urządzeniach-2026-10-19). |
 | Trzy fizyczne węzły BLE i pętla — historyczne 1.1.x | Ręczna trasa Galaxy Watch4 → A22 → A51 i powrót bez duplikatu. [Wyniki i wersje](evidence/three-node-ble-smoke.json), [przekaźnik](evidence/three-node-a22-relay.png), [odbiorca](evidence/three-node-a51-final.png). |
 | Automatyczna sieć 1.2, późny sąsiad i pętle | Trzy emulatory Android/Wear, ten sam UUID, trzeci dołącza po wcześniejszym ACK. Nie jest to próba fizycznego zasięgu. [Wyniki](evidence/auto-mesh-smoke.json). |
+| Fizyczny A22 — migracja i odbiór 1.2 | Wszystkie 11 raportów i 4 UUID zachowane, 18 testów Android na telefonie; rzeczywista reklama BLE, odbiór duplikatu z PC bez nowego raportu, HTTP z komputera przez LAN bez ADB. Nie jest to próba automatycznego mesh wielu fizycznych węzłów. [Dowody](evidence/physical-a22-smoke.json). |
 | Tablica bez aplikacji i SMS | Rzeczywista przeglądarka odczytała HTTP z Androida przez przekierowanie ADB; prywatna notatka nieobecna. Systemowy edytor SMS dostał dane, bez zatwierdzania wysyłki. [Tablica](evidence/auto-mesh-board.png), [SMS](evidence/auto-mesh-sms-preview.png). Fizyczne połączenie klienta z nowym hotspotem pozostaje niesprawdzone. |
-| Migracje, późny sąsiad, retencja, deduplikacja | 18 testów Android w emulatorze, w tym migracja v1 i atomowe SOS; wcześniejsze testy fizyczne 1.1: [wyniki](evidence/durable-smoke.json). |
+| Migracje, późny sąsiad, retencja, deduplikacja | Ten sam zestaw 18 testów Android przeszedł w emulatorze i na fizycznym A22, w tym migracja v1 i atomowe SOS; wcześniejsze testy fizyczne 1.1: [wyniki](evidence/durable-smoke.json). |
 | Praca w tle, zasięg, bateria | Brak gwarancji i testów operacyjnych. |
 | Szyfrowanie i uwierzytelnianie | Brak implementacji. Tylko prototyp w zaufanym środowisku. |
 | Lokalny LLM w aplikacji | Plan integracji; obecnie niezależny eksperyment Python. |

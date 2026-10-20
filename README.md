@@ -1,6 +1,6 @@
 # Crisis Mesh / Radio Officer
 
-Eksperymentalna aplikacja Android/Wear OS do krótkich raportów kryzysowych. **1.2.0:** automatyczne wykrywanie i przekazywanie BLE, lokalna tablica w przeglądarce oraz jawne przekazanie do skonfigurowanego kontaktu przez edytor SMS. Ręczną trasę trzech fizycznych węzłów BLE potwierdzono w 1.1.1; nową automatyczną sieć sprawdzono na emulatorach, nie jeszcze na tych telefonach i zegarku. **To nie jest niezawodny system ratunkowy ani integracja ze służbami.** Repo zawiera też oddzielny eksperyment lokalnego GoLLeM, bez integracji z APK.
+Eksperymentalna aplikacja Android/Wear OS do krótkich raportów kryzysowych. **1.2.0:** automatyczne wykrywanie i przekazywanie BLE, lokalna tablica w przeglądarce oraz jawne przekazanie do skonfigurowanego kontaktu przez edytor SMS. Ręczną trasę trzech fizycznych węzłów BLE potwierdzono w 1.1.1; pełną automatyczną sieć 1.2 sprawdzono na emulatorach. Fizyczny A22 ma potwierdzoną migrację, odbiór duplikatu BLE z PC i tablicę HTTP przez LAN; próba wielu fizycznych węzłów 1.2 nadal pozostaje do wykonania. **To nie jest niezawodny system ratunkowy ani integracja ze służbami.** Repo zawiera też oddzielny eksperyment lokalnego GoLLeM, bez integracji z APK.
 
 **[Tablica architektury](ARCHITECTURE.md)** — przepływ raportu, transport TCP/BLE,
 moduły aplikacji oraz planowana rola lokalnego GoLLeM. Diagram renderuje się w GitHubie.
@@ -112,6 +112,23 @@ Dowody: [wyniki 1.2](evidence/auto-mesh-smoke.json),
 [tablica](evidence/auto-mesh-board.png),
 [systemowy podgląd SMS](evidence/auto-mesh-sms-preview.png),
 [Wear](evidence/auto-mesh-watch.png).
+
+### Fizyczny Galaxy A22 — 1.2.0
+
+Aktualizacja z 1.1.1 na Androidzie 13 zachowała dokładnie wszystkie 11 raportów
+(identyfikatory, daty, źródła, pakiety i notatki) oraz 4 rekordy UUID i ich skróty.
+Na telefonie przeszło 18 testów Android, na oddzielnych bazach testowych.
+Komputer odebrał rzeczywistą reklamę BLE z identyfikatorem tego węzła i odtworzył
+dawny testowy UUID `8ed1670e-0fd1-43de-9951-12ef716a5a18`: trzy potwierdzone
+zapisy ATT, bez nowego SOS i bez zmiany historii.
+
+Rzeczywista przeglądarka komputera odczytała dwa opublikowane raporty bezpośrednio
+przez Wi-Fi LAN, bez przekierowania ADB. Zapis HTTP został odrzucony kodem 405.
+To nie jest jeszcze dowód automatycznego przekazywania Android → Android 1.2
+ani połączenia klienta z nowym hotspotem. Pozostałe urządzenia nie były
+aktualizowane w tej próbie; dalsze sterowanie wymaga odblokowanego ekranu A22.
+[Dowody fizycznego A22](evidence/physical-a22-smoke.json).
+
 
 
 ### Historyczna weryfikacja formularza (JSON/CMF1, emulator, 2026-10-16)
