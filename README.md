@@ -124,9 +124,16 @@ zapisy ATT, bez nowego SOS i bez zmiany historii.
 
 Rzeczywista przeglądarka komputera odczytała dwa opublikowane raporty bezpośrednio
 przez Wi-Fi LAN, bez przekierowania ADB. Zapis HTTP został odrzucony kodem 405.
-To nie jest jeszcze dowód automatycznego przekazywania Android → Android 1.2
-ani połączenia klienta z nowym hotspotem. Pozostałe urządzenia nie były
-aktualizowane w tej próbie; dalsze sterowanie wymaga odblokowanego ekranu A22.
+Fizyczny hotspot został uruchomiony: `swlan0`, stan systemowy `LocalHotspotState`,
+brak błędu i brak upstreamu internetowego. Serwer odpowiedział HTTP 200 na adresie
+tego interfejsu; była to próba własna telefonu, nie połączenie zewnętrznego klienta.
+W tej próbie `wlan0` przeszedł w stan DOWN, więc poprzedni adres LAN przestał być
+właściwym adresem do testu hotspotu. Aktualny adres odczytano z systemu, nie założono
+końcówki `.1`. Hasło pozostaje na ekranie telefonu i nie trafia do dowodów.
+Komputer zachował własne połączenie Wi-Fi.
+
+Pozostają połączenie drugiego urządzenia z hotspotem oraz automatyczne przekazywanie
+Android → Android 1.2. Pozostałe urządzenia nie były aktualizowane w tej próbie.
 [Dowody fizycznego A22](evidence/physical-a22-smoke.json).
 
 

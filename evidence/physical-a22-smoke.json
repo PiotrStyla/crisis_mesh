@@ -54,9 +54,18 @@
     "valid_screenshot_saved": false
   },
   "hotspot": {
-    "physical_start_verified": false,
+    "physical_start_verified": true,
+    "native_interface": "swlan0",
+    "native_state": "LocalHotspotState",
+    "native_last_error": 0,
+    "upstream_wanted": false,
+    "upstream_interface": null,
+    "address_from_actual_interface": "10.98.64.202",
+    "browser_url": "http://10.98.64.202:8080/",
     "client_connection_verified": false,
-    "pending_reason": "Screen is PIN/fingerprint locked; owner must unlock it. Test HTTP sharing was stopped; app reopened behind keyguard."
+    "pending_reason": "Connect a second physical device to the network shown on the A22 and open this URL. Workstation Wi-Fi was not switched.",
+    "host_self_probe_health_status": 200,
+    "self_probe_is_external_client_test": false
   },
   "multi_physical_node_1_2_mesh_verified": false,
   "new_sos_publications": 0,
@@ -70,9 +79,11 @@
     "No guarantee of background operation or rescue-service acceptance."
   ],
   "cleanup": {
-    "test_public_board_stopped_by_app_restart": true,
     "test_instrumentation_removed": true,
     "temporary_device_dump_removed": true,
-    "screen_timeout_changed": false
-  }
+    "screen_timeout_changed": false,
+    "public_board_active_for_owner_client_test": true,
+    "hotspot_active_for_owner_client_test": true
+  },
+  "updated_at_host_utc": "2026-10-20T06:31:09.371796+00:00"
 }
